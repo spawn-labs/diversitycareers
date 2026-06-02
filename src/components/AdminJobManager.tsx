@@ -242,6 +242,13 @@ export function AdminJobManager() {
               </label>
             </div>
             <input
+              type="email"
+              placeholder="Application email (candidates apply via mailto)"
+              value={editing.applyEmail ?? ""}
+              onChange={(e) => setEditing({ ...editing, applyEmail: e.target.value })}
+              className="w-full rounded-lg border px-3 py-2"
+            />
+            <input
               placeholder="Application URL (https optional)"
               value={editing.applyUrl ?? ""}
               onChange={(e) => setEditing({ ...editing, applyUrl: e.target.value })}

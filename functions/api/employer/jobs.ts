@@ -14,9 +14,6 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
   const jobs = store.jobs.filter(
     (j) => j.employerId === session.userId || j.employerEmail === session.email,
   );
-  const applications = store.applications.filter((a) =>
-    jobs.some((j) => j.id === a.jobId),
-  );
 
-  return jsonResponse({ jobs, applications });
+  return jsonResponse({ jobs });
 };

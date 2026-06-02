@@ -36,7 +36,7 @@ export function Home() {
             <h2 className="mt-3 font-display text-2xl font-bold text-brand-700">For job seekers</h2>
             <p className="mt-2 text-muted">
               Keyword and location search, filters by category, state, pay, and remote work — apply
-              in a click.
+              by email or on the employer&apos;s site.
             </p>
             <Link
               to="/jobs"
@@ -52,7 +52,7 @@ export function Home() {
             <h2 className="mt-3 font-display text-2xl font-bold text-brand-700">For employers</h2>
             <p className="mt-2 text-muted">
               Pay securely via Stripe before your listing goes live. Each paid post stays active for{" "}
-              {JOB_LISTING_DAYS} days. Manage posts and applications from your dashboard.
+              {JOB_LISTING_DAYS} days. Candidates apply directly to your email or careers page.
             </p>
             <div className="mt-4">
               <ListingDurationNotice compact />

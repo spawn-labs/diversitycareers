@@ -1,19 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ErrorAlert } from "../components/ErrorAlert";
-import { getJob, submitApplication, type Job, formatLocation, formatPay } from "../lib/api";
+import { buildApplyMailto } from "../lib/apply";
+import { getJob, type Job, formatLocation, formatPay } from "../lib/api";
 
 export function JobDetail() {
   const { id } = useParams();
   const [job, setJob] = useState<Job | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [success, setSuccess] = useState(false);
-  const [formLoadedAt] = useState(() => Date.now());
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [message, setMessage] = useState("");
 
   useEffect(() => {
     if (!id) return;
@@ -21,25 +15,6 @@ export function JobDetail() {
       .then((d) => setJob(d.job))
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load job"));
   }, [id]);
-
-  async function apply(e: React.FormEvent) {
-    e.preventDefault();
-    setFormError(null);
-    try {
-      await submitApplication({
-        jobId: id,
-        name,
-        email,
-        phone,
-        message,
-        formLoadedAt,
-        website_url: "",
-      });
-      setSuccess(true);
-    } catch (err) {
-      setFormError(err instanceof Error ? err.message : "Application failed");
-    }
-  }
 
   if (error) {
     return (
@@ -55,6 +30,8 @@ export function JobDetail() {
   if (!job) return <p className="p-8 text-center text-muted">Loading…</p>;
 
   const pay = formatPay(job);
+  const hasUrl = Boolean(job.applyUrl);
+  const hasEmail = Boolean(job.applyEmail);
 
   return (
     <article className="mx-auto max-w-3xl px-4 py-8 sm:px-6">
@@ -68,9 +45,7 @@ export function JobDetail() {
           <span className="rounded-md bg-brand-50 px-3 py-1 text-brand-700">
             {formatLocation(job)}
           </span>
-          {pay && (
-            <span className="rounded-md bg-stone-100 px-3 py-1">{pay}</span>
-          )}
+          {pay && <span className="rounded-md bg-stone-100 px-3 py-1">{pay}</span>}
           <span className="rounded-md bg-stone-100 px-3 py-1">{job.category}</span>
         </div>
       </header>
@@ -79,77 +54,42 @@ export function JobDetail() {
         <p className="whitespace-pre-wrap text-stone-700">{job.description}</p>
       </div>
 
-      {job.applyUrl && (
-        <a
-          href={job.applyUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-6 inline-block rounded-xl bg-brand-600 px-6 py-3 font-bold text-white hover:bg-brand-700"
-        >
-          Apply on company site
-        </a>
+      {(hasUrl || hasEmail) && (
+        <section className="mt-10 rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+          <h2 className="font-display text-xl font-bold text-brand-700">Apply for this role</h2>
+          <p className="mt-2 text-sm text-muted">
+            {hasEmail && hasUrl
+              ? "Apply by email or visit the company's application page."
+              : hasEmail
+                ? "Click below to open your email app and send your application directly to the employer."
+                : "Continue to the company's application page."}
+          </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            {hasEmail && (
+              <a
+                href={buildApplyMailto({
+                  title: job.title,
+                  company: job.company,
+                  applyEmail: job.applyEmail!,
+                })}
+                className="inline-block rounded-xl bg-accent-500 px-6 py-3 font-display font-bold text-white hover:bg-accent-400"
+              >
+                Apply by email
+              </a>
+            )}
+            {hasUrl && (
+              <a
+                href={job.applyUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block rounded-xl bg-brand-600 px-6 py-3 font-bold text-white hover:bg-brand-700"
+              >
+                Apply on company site
+              </a>
+            )}
+          </div>
+        </section>
       )}
-
-      <section className="mt-10 rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-        <h2 className="font-display text-xl font-bold text-brand-700">Quick apply</h2>
-        {success ? (
-          <p className="mt-4 text-brand-700">Thanks! Your application was submitted.</p>
-        ) : (
-          <form onSubmit={apply} className="mt-4 space-y-4">
-            <ErrorAlert message={formError} />
-            <input
-              type="text"
-              name="website_url"
-              tabIndex={-1}
-              autoComplete="off"
-              className="absolute -left-[9999px] opacity-0"
-              aria-hidden
-            />
-            <label className="block">
-              <span className="text-sm font-semibold">Full name</span>
-              <input
-                required
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2"
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm font-semibold">Email</span>
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2"
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm font-semibold">Phone (optional)</span>
-              <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2"
-              />
-            </label>
-            <label className="block">
-              <span className="text-sm font-semibold">Message (optional)</span>
-              <textarea
-                rows={4}
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-stone-200 px-3 py-2"
-              />
-            </label>
-            <button
-              type="submit"
-              className="rounded-xl bg-accent-500 px-6 py-3 font-display font-bold text-white hover:bg-accent-400"
-            >
-              Submit application
-            </button>
-          </form>
-        )}
-      </section>
     </article>
   );
 }

@@ -31,6 +31,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   }
 
   const draft = normalizeDraft(rawDraft);
+  if (!draft.applyEmail?.trim() && !draft.applyUrl?.trim()) {
+    return errorResponse(
+      "An application email or application URL is required so candidates can apply.",
+      400,
+    );
+  }
+
   const pendingId = newId();
   let checkoutUrl = "";
 

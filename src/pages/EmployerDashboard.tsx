@@ -8,19 +8,13 @@ import { daysRemaining, formatExpiryDate } from "../lib/listing";
 export function EmployerDashboard() {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [applications, setApplications] = useState<
-    { id: string; jobId: string; name: string; email: string; createdAt: string }[]
-  >([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     employerJobs()
-      .then((d) => {
-        setJobs(d.jobs);
-        setApplications(d.applications);
-      })
+      .then((d) => setJobs(d.jobs))
       .catch((e) => {
-        if (String(e).includes("401") || e instanceof Error && e.message.includes("Login")) {
+        if (String(e).includes("401") || (e instanceof Error && e.message.includes("Login"))) {
           navigate("/login");
         } else {
           setError(e instanceof Error ? e.message : "Failed to load dashboard");
@@ -45,6 +39,10 @@ export function EmployerDashboard() {
         <div className="mt-4">
           <ListingDurationNotice />
         </div>
+        <p className="mt-4 text-sm text-muted">
+          Candidate applications are sent <strong>directly to the application email</strong> or URL
+          you listed on each job — not stored here. Check your inbox or ATS for new applicants.
+        </p>
         <ErrorAlert message={error} />
 
         <section className="mt-6">
@@ -54,10 +52,7 @@ export function EmployerDashboard() {
           ) : (
             <ul className="mt-4 space-y-3">
               {jobs.map((job) => (
-                <li
-                  key={job.id}
-                  className="rounded-xl border border-stone-200 bg-white p-4"
-                >
+                <li key={job.id} className="rounded-xl border border-stone-200 bg-white p-4">
                   <div className="flex flex-wrap justify-between gap-2">
                     <div>
                       <h3 className="font-bold text-brand-700">{job.title}</h3>
@@ -68,11 +63,20 @@ export function EmployerDashboard() {
                             {" "}
                             · Expires {formatExpiryDate(job.expiresAt)}
                             {daysRemaining(job.expiresAt, job.paidAt, job.createdAt) != null && (
-                              <> ({daysRemaining(job.expiresAt, job.paidAt, job.createdAt)} days left)</>
+                              <>
+                                {" "}
+                                ({daysRemaining(job.expiresAt, job.paidAt, job.createdAt)} days
+                                left)
+                              </>
                             )}
                           </>
                         )}
                       </p>
+                      {job.applyEmail && (
+                        <p className="mt-1 text-xs text-muted">
+                          Applications emailed to: {job.applyEmail}
+                        </p>
+                      )}
                     </div>
                     <Link
                       to={`/jobs/${job.id}`}
@@ -84,36 +88,6 @@ export function EmployerDashboard() {
                 </li>
               ))}
             </ul>
-          )}
-        </section>
-
-        <section className="mt-10">
-          <h2 className="font-display text-xl font-bold">Applications received</h2>
-          {applications.length === 0 ? (
-            <p className="mt-2 text-muted">No applications yet.</p>
-          ) : (
-            <div className="mt-4 overflow-x-auto rounded-xl border border-stone-200 bg-white">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b bg-stone-50 font-semibold">
-                  <tr>
-                    <th className="p-3">Candidate</th>
-                    <th className="p-3">Email</th>
-                    <th className="p-3">Job ID</th>
-                    <th className="p-3">Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {applications.map((a) => (
-                    <tr key={a.id} className="border-b last:border-0">
-                      <td className="p-3">{a.name}</td>
-                      <td className="p-3">{a.email}</td>
-                      <td className="p-3 font-mono text-xs">{a.jobId.slice(0, 8)}…</td>
-                      <td className="p-3">{new Date(a.createdAt).toLocaleDateString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           )}
         </section>
       </div>

@@ -40,6 +40,12 @@ export function EmployerPost() {
   async function handlePayFirst(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+
+    if (!applyEmail.trim() && !applyUrl.trim()) {
+      setError("Add an application email or application URL so candidates know how to apply.");
+      return;
+    }
+
     setLoading(true);
     try {
       const { checkoutUrl } = await createCheckout(
@@ -211,24 +217,38 @@ export function EmployerPost() {
         </fieldset>
 
         <fieldset className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5">
-          <legend className="font-display font-bold text-brand-700">How to apply</legend>
-          <input
-            type="text"
-            placeholder="Application URL (example.com/apply or https://…)"
-            value={applyUrl}
-            onChange={(e) => setApplyUrl(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2"
-          />
-          <p className="text-xs text-muted">
-            https:// is optional — we&apos;ll add it automatically if missing.
+          <legend className="font-display font-bold text-brand-700">How candidates apply</legend>
+          <p className="text-sm text-muted">
+            Applications go <strong>directly to you</strong> — by email or your careers page. We do
+            not collect or store candidate applications on Diversity Careers.
           </p>
-          <input
-            type="email"
-            placeholder="Or application email"
-            value={applyEmail}
-            onChange={(e) => setApplyEmail(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2"
-          />
+          <label className="block">
+            <span className="text-sm font-semibold">Application email</span>
+            <input
+              type="email"
+              placeholder="careers@yourcompany.com"
+              value={applyEmail}
+              onChange={(e) => setApplyEmail(e.target.value)}
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+            />
+            <span className="mt-1 block text-xs text-muted">
+              Candidates click &quot;Apply by email&quot; and their mail app opens a message to this
+              inbox. Check this mailbox for applications.
+            </span>
+          </label>
+          <label className="block">
+            <span className="text-sm font-semibold">Or application URL</span>
+            <input
+              type="text"
+              placeholder="example.com/careers/apply or https://…"
+              value={applyUrl}
+              onChange={(e) => setApplyUrl(e.target.value)}
+              className="mt-1 w-full rounded-lg border px-3 py-2"
+            />
+            <span className="mt-1 block text-xs text-muted">
+              https:// is optional. Provide at least an application email or URL.
+            </span>
+          </label>
         </fieldset>
 
         <label className="block">

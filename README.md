@@ -91,7 +91,8 @@ Connect the GitHub repo for automatic deploys on push.
 
 - Payments: Stripe Checkout only; card data never hits this app.
 - Jobs publish only after `checkout.session.completed` webhook marks payment paid.
-- Forms: honeypot field, minimum submit time, per-IP rate limits.
+- Forms: honeypot field, per-IP rate limits on checkout and auth.
+- Candidates apply via **Apply by email** (`mailto:`) or an external application URL — applications are not stored on-site.
 - Sessions: signed HttpOnly cookies (`SESSION_SECRET`).
 
 ## Project layout

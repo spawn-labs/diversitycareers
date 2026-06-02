@@ -80,13 +80,6 @@ export function getJob(id: string) {
   return api<{ job: Job }>(`/api/jobs/${id}`);
 }
 
-export function submitApplication(body: Record<string, unknown>) {
-  return api<{ ok: boolean; message: string }>("/api/applications", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
 export function authMe() {
   return api<{
     authenticated: boolean;
@@ -136,10 +129,7 @@ export function checkoutStatus(sessionId: string) {
 }
 
 export function employerJobs() {
-  return api<{
-    jobs: Job[];
-    applications: { id: string; jobId: string; name: string; email: string; createdAt: string }[];
-  }>("/api/employer/jobs");
+  return api<{ jobs: Job[] }>("/api/employer/jobs");
 }
 
 export function linkJob(jobId: string) {
