@@ -1,0 +1,3 @@
+title,company,description,category,city,state,zip,remote,employmentType,payMin,payMax,payPeriod,applyUrl,applyEmail,employerEmail
+"DEI Program Manager","Inclusive Corp","Lead diversity recruiting initiatives","Human Resources","Boston","MA","02108",false,full-time,90000,110000,year,careers.inclusivecorp.com,,hr@inclusivecorp.com
+"Remote UX Designer","Design For All","Accessible product design","Technology",,,,true,contract,55,75,hour,https://designforall.example/jobs,,talent@designforall.example

@@ -27,9 +27,13 @@ export interface Job {
   status: JobStatus;
   stripeCheckoutSessionId?: string;
   paidAt?: string;
+  /** ISO date when listing stops appearing in search (default: 60 days after publish). */
+  expiresAt?: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export const JOB_LISTING_DAYS = 60;
 
 export interface User {
   id: string;

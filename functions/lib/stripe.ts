@@ -70,7 +70,7 @@ export async function createCheckoutSession(
       "line_items[0][price_data][unit_amount]": priceCents,
       "line_items[0][price_data][product_data][name]": "Diversity Careers Job Posting",
       "line_items[0][price_data][product_data][description]":
-        "30-day featured job listing for diversity-focused hiring",
+        "60-day featured job listing for diversity-focused hiring",
       "line_items[0][quantity]": "1",
       customer_email: opts.employerEmail,
       success_url: `${appUrl}${opts.successPath}?session_id={CHECKOUT_SESSION_ID}`,

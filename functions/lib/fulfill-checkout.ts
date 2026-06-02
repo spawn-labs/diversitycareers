@@ -1,6 +1,6 @@
+import { createPublishedJob, normalizeDraft } from "./jobs";
 import { getCheckoutSession } from "./stripe";
-import { mutateStore, newId, readStore } from "./store";
-import type { Job } from "./types";
+import { mutateStore, readStore } from "./store";
 
 /** Publish job from a paid checkout (webhook or success-page fallback). */
 export async function fulfillCheckoutIfPaid(
@@ -43,15 +43,14 @@ export async function fulfillCheckoutIfPaid(
     }
 
     const now = new Date().toISOString();
-    const job: Job = {
-      id: newId(),
-      ...p.draft,
-      status: "published",
-      stripeCheckoutSessionId: stripeSessionId,
-      paidAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const draft = normalizeDraft(p.draft);
+    const job = createPublishedJob(
+      {
+        ...draft,
+        stripeCheckoutSessionId: stripeSessionId,
+      },
+      { paidAt: now },
+    );
 
     s.jobs.push(job);
     p.status = "paid";

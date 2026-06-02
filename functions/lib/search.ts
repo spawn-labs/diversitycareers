@@ -1,3 +1,4 @@
+import { isJobListed } from "./jobs";
 import type { Job, JobLocation } from "./types";
 
 export interface SearchParams {
@@ -50,7 +51,7 @@ function locationMatch(job: Job, params: SearchParams): boolean {
 
 export function searchJobs(jobs: Job[], params: SearchParams): Job[] {
   return jobs
-    .filter((j) => j.status === "published")
+    .filter((j) => isJobListed(j))
     .filter((j) => {
       if (params.q && !matchesKeyword(j, params.q)) return false;
       if (!locationMatch(j, params)) return false;

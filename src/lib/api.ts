@@ -17,7 +17,11 @@ export interface Job {
   applyUrl?: string;
   applyEmail?: string;
   status: string;
+  paidAt?: string;
+  expiresAt?: string;
   createdAt: string;
+  updatedAt?: string;
+  employerEmail?: string;
 }
 
 export interface SearchFacets {
@@ -170,6 +174,35 @@ export function importSeed(jobs: unknown[]) {
     method: "POST",
     body: JSON.stringify({ jobs }),
   });
+}
+
+export function adminImportFile(body: { format: "csv" | "json"; content: string }) {
+  return api<{ imported: number; totalRows: number }>("/api/admin/import-upload", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function adminListJobs() {
+  return api<{ jobs: Job[] }>("/api/admin/jobs");
+}
+
+export function adminCreateJob(job: Partial<Job>) {
+  return api<{ job: Job }>("/api/admin/jobs", {
+    method: "POST",
+    body: JSON.stringify(job),
+  });
+}
+
+export function adminUpdateJob(id: string, job: Partial<Job>) {
+  return api<{ job: Job }>(`/api/admin/jobs/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(job),
+  });
+}
+
+export function adminDeleteJob(id: string) {
+  return api<{ ok: boolean }>(`/api/admin/jobs/${id}`, { method: "DELETE" });
 }
 
 export function formatPay(job: Job): string | null {

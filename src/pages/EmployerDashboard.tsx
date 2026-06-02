@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ErrorAlert } from "../components/ErrorAlert";
+import { ListingDurationNotice } from "../components/ListingDurationNotice";
 import { employerJobs, formatLocation, type Job } from "../lib/api";
+import { daysRemaining, formatExpiryDate } from "../lib/listing";
 
 export function EmployerDashboard() {
   const navigate = useNavigate();
@@ -40,6 +42,9 @@ export function EmployerDashboard() {
 
       <div className="min-w-0 flex-1">
         <h1 className="font-display text-3xl font-extrabold text-brand-700">Dashboard</h1>
+        <div className="mt-4">
+          <ListingDurationNotice />
+        </div>
         <ErrorAlert message={error} />
 
         <section className="mt-6">
@@ -58,6 +63,15 @@ export function EmployerDashboard() {
                       <h3 className="font-bold text-brand-700">{job.title}</h3>
                       <p className="text-sm text-muted">
                         {formatLocation(job)} · {job.status}
+                        {job.status === "published" && (
+                          <>
+                            {" "}
+                            · Expires {formatExpiryDate(job.expiresAt)}
+                            {daysRemaining(job.expiresAt, job.paidAt, job.createdAt) != null && (
+                              <> ({daysRemaining(job.expiresAt, job.paidAt, job.createdAt)} days left)</>
+                            )}
+                          </>
+                        )}
                       </p>
                     </div>
                     <Link

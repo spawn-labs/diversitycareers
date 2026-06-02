@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ErrorAlert } from "../components/ErrorAlert";
+import { ListingDurationNotice } from "../components/ListingDurationNotice";
 import { createCheckout } from "../lib/api";
+import { JOB_LISTING_DAYS } from "../lib/listing";
 
 const CATEGORIES = [
   "Technology",
@@ -76,6 +78,9 @@ export function EmployerPost() {
         Payment is required <strong>before</strong> your listing goes live. You&apos;ll complete
         checkout with Stripe, then create an account to manage your post.
       </p>
+      <div className="mt-4">
+        <ListingDurationNotice />
+      </div>
 
       <form onSubmit={handlePayFirst} className="mt-8 space-y-5">
         <ErrorAlert message={error} />
@@ -208,12 +213,15 @@ export function EmployerPost() {
         <fieldset className="space-y-4 rounded-2xl border border-stone-200 bg-white p-5">
           <legend className="font-display font-bold text-brand-700">How to apply</legend>
           <input
-            type="url"
-            placeholder="Application URL"
+            type="text"
+            placeholder="Application URL (example.com/apply or https://…)"
             value={applyUrl}
             onChange={(e) => setApplyUrl(e.target.value)}
             className="w-full rounded-lg border px-3 py-2"
           />
+          <p className="text-xs text-muted">
+            https:// is optional — we&apos;ll add it automatically if missing.
+          </p>
           <input
             type="email"
             placeholder="Or application email"
@@ -242,7 +250,8 @@ export function EmployerPost() {
           {loading ? "Redirecting to secure checkout…" : "Continue to payment"}
         </button>
         <p className="text-center text-xs text-muted">
-          Payments are processed by Stripe. Card details never touch our servers.
+          Payments are processed by Stripe. Card details never touch our servers. Your listing
+          runs for {JOB_LISTING_DAYS} days after payment.
         </p>
         <p className="text-center text-sm font-semibold text-brand-600">
           <Link to="/login">Already have an account? Sign in</Link>

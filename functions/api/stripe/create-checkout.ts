@@ -1,5 +1,6 @@
 import { errorResponse, jsonResponse } from "../../lib/auth";
 import { checkRateLimit, checkSpamBasics, clientIp, defaultHoneypotField } from "../../lib/spam";
+import { normalizeDraft } from "../../lib/jobs";
 import { createCheckoutSession } from "../../lib/stripe";
 import { mutateStore, newId } from "../../lib/store";
 import type { JobDraft } from "../../lib/types";
@@ -21,14 +22,15 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   );
   if (spamErr) return errorResponse(spamErr, 400);
 
-  const draft = body.draft as JobDraft | undefined;
-  if (!draft?.title || !draft.company || !draft.description || !draft.employerEmail) {
+  const rawDraft = body.draft as JobDraft | undefined;
+  if (!rawDraft?.title || !rawDraft.company || !rawDraft.description || !rawDraft.employerEmail) {
     return errorResponse("Complete job details before payment.", 400);
   }
-  if (!draft.employerEmail.includes("@")) {
+  if (!rawDraft.employerEmail.includes("@")) {
     return errorResponse("Valid employer email required.", 400);
   }
 
+  const draft = normalizeDraft(rawDraft);
   const pendingId = newId();
   let checkoutUrl = "";
 

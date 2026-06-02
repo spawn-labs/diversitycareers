@@ -62,8 +62,15 @@ verifying payment directly with Stripe when you land on `/employer/success?sessi
 ## Admin & seed data
 
 1. Register/login with an email listed in `ADMIN_EMAILS`.
-2. Open `/admin` → **Import seed jobs** (loads `data/seed-jobs.json`).
+2. Open `/admin`:
+   - **Manage all jobs** — add, edit, delete any listing
+   - **Import CSV or JSON** — upload a file (see `data/sample-import.csv`)
+   - **Import seed jobs** — loads bundled `data/seed-jobs.json`
 3. Add RSS/JSON crawl sources and run **Crawl now** to pull external listings.
+
+Paid employer listings are live for **60 days** from payment, then automatically expire from search.
+
+Application URLs may be entered with or without `https://`; the server normalizes them on save.
 
 ## Deploy to Cloudflare Pages
 

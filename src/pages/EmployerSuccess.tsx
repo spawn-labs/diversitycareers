@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ErrorAlert } from "../components/ErrorAlert";
+import { ListingDurationNotice } from "../components/ListingDurationNotice";
 import { checkoutStatus, linkJob, register } from "../lib/api";
 
 export function EmployerSuccess() {
@@ -88,6 +89,9 @@ export function EmployerSuccess() {
   return (
     <div className="mx-auto max-w-lg px-4 py-12 sm:px-6">
       <h1 className="font-display text-3xl font-extrabold text-brand-700">Payment received</h1>
+      <div className="mt-4">
+        <ListingDurationNotice compact />
+      </div>
 
       {status === "loading" && (
         <p className="mt-4 text-muted">Confirming your payment with Stripe…</p>

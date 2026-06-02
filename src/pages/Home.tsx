@@ -1,5 +1,7 @@
 import { Link } from "react-router-dom";
+import { ListingDurationNotice } from "../components/ListingDurationNotice";
 import { SearchBar } from "../components/SearchBar";
+import { JOB_LISTING_DAYS } from "../lib/listing";
 
 export function Home() {
   return (
@@ -49,9 +51,12 @@ export function Home() {
             </span>
             <h2 className="mt-3 font-display text-2xl font-bold text-brand-700">For employers</h2>
             <p className="mt-2 text-muted">
-              Pay securely via Stripe before your listing goes live. Manage posts and applications
-              from your dashboard.
+              Pay securely via Stripe before your listing goes live. Each paid post stays active for{" "}
+              {JOB_LISTING_DAYS} days. Manage posts and applications from your dashboard.
             </p>
+            <div className="mt-4">
+              <ListingDurationNotice compact />
+            </div>
             <Link
               to="/employer/post"
               className="mt-4 inline-block rounded-xl bg-accent-500 px-5 py-2.5 font-display font-bold text-white hover:bg-accent-400"

@@ -1,4 +1,4 @@
-import { newId } from "./store";
+import { createPublishedJob } from "./jobs";
 import type { CrawlSource, Job, JobDraft } from "./types";
 
 /** Minimal RSS/JSON job import for admin seeding. */
@@ -91,13 +91,13 @@ export function draftsToPublishedJobs(
   employerId?: string,
 ): Job[] {
   const now = new Date().toISOString();
-  return drafts.map((d) => ({
-    id: newId(),
-    ...d,
-    employerId,
-    status: "published" as const,
-    paidAt: now,
-    createdAt: now,
-    updatedAt: now,
-  }));
+  return drafts.map((d) =>
+    createPublishedJob(
+      {
+        ...d,
+        employerId,
+      },
+      { paidAt: now },
+    ),
+  );
 }

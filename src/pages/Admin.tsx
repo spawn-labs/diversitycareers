@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import seedJobs from "../../data/seed-jobs.json";
+import { AdminJobManager } from "../components/AdminJobManager";
 import { ErrorAlert } from "../components/ErrorAlert";
+import { ListingDurationNotice } from "../components/ListingDurationNotice";
 import { addSource, adminSources, crawlSource, importSeed } from "../lib/api";
 
 export function Admin() {
@@ -64,11 +66,14 @@ export function Admin() {
     <div className="mx-auto flex max-w-6xl flex-col gap-6 px-4 py-8 sm:flex-row sm:px-6">
       <aside className="w-full shrink-0 rounded-2xl border border-stone-200 bg-white p-4 sm:w-56">
         <h2 className="font-display font-bold text-brand-700">Admin</h2>
-        <p className="mt-2 text-xs text-muted">Job sources & seed data</p>
+        <p className="mt-2 text-xs text-muted">Jobs, imports & crawl sources</p>
       </aside>
 
       <div className="min-w-0 flex-1">
         <h1 className="font-display text-3xl font-extrabold text-brand-700">Admin panel</h1>
+        <div className="mt-4">
+          <ListingDurationNotice />
+        </div>
         <ErrorAlert message={error} />
         {message && (
           <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3 text-sm text-brand-800">
@@ -76,11 +81,12 @@ export function Admin() {
           </div>
         )}
 
+        <AdminJobManager />
+
         <section className="mt-8 rounded-2xl border bg-white p-5">
-          <h2 className="font-display text-lg font-bold">Seed jobs</h2>
+          <h2 className="font-display text-lg font-bold">Built-in seed jobs</h2>
           <p className="mt-1 text-sm text-muted">
-            Load sample listings from <code className="text-xs">data/seed-jobs.json</code> to
-            populate the board for testing.
+            Load sample listings from <code className="text-xs">data/seed-jobs.json</code>.
           </p>
           <button
             type="button"

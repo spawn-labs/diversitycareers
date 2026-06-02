@@ -1,6 +1,7 @@
 import { jsonResponse } from "../../lib/auth";
+import { expireStaleJobs, isJobListed } from "../../lib/jobs";
 import { facetCounts, searchJobs } from "../../lib/search";
-import { readStore } from "../../lib/store";
+import { mutateStore, readStore } from "../../lib/store";
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   const url = new URL(context.request.url);
@@ -17,9 +18,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       : undefined,
   };
 
+  await mutateStore(context.env.DC_DATA, (s) => {
+    expireStaleJobs(s.jobs);
+  });
+
   const store = await readStore(context.env.DC_DATA);
   const results = searchJobs(store.jobs, params);
-  const published = store.jobs.filter((j) => j.status === "published");
   const facets = facetCounts(
     searchJobs(store.jobs, {
       q: params.q,
@@ -29,10 +33,12 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     }),
   );
 
+  const listed = store.jobs.filter((j) => isJobListed(j));
+
   return jsonResponse({
     results,
     total: results.length,
     facets,
-    categories: [...new Set(published.map((j) => j.category))].sort(),
+    categories: [...new Set(listed.map((j) => j.category))].sort(),
   });
 };
