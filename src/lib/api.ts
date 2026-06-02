@@ -36,8 +36,30 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  const contentType = res.headers.get("Content-Type") ?? "";
+  const bodyText = await res.text();
+  const isJson = contentType.includes("application/json");
+
+  let data: (T & { error?: string }) | null = null;
+  if (isJson && bodyText) {
+    try {
+      data = JSON.parse(bodyText) as T & { error?: string };
+    } catch {
+      data = null;
+    }
+  }
+
+  if (!res.ok) {
+    const details = data?.error ?? bodyText.slice(0, 180).replace(/\s+/g, " ").trim();
+    throw new Error(details || `Request failed (${res.status})`);
+  }
+
+  if (!data) {
+    throw new Error(
+      `Unexpected response format from ${path}. Expected JSON but got ${contentType || "unknown content type"}.`,
+    );
+  }
+
   return data;
 }
 
