@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { ErrorAlert } from "../components/ErrorAlert";
 import { checkoutStatus, linkJob, register } from "../lib/api";
@@ -13,6 +13,22 @@ export function EmployerSuccess() {
   const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [formLoadedAt] = useState(() => Date.now());
+  const [accountCreated, setAccountCreated] = useState(false);
+
+  const refreshStatus = useCallback(async () => {
+    if (!sessionId) return;
+    const data = await checkoutStatus(sessionId);
+    setEmail(data.employerEmail);
+    if (data.paid && data.jobId) {
+      setJobId(data.jobId);
+      setStatus("paid");
+      return true;
+    }
+    if (data.employerEmail) {
+      setStatus("pending");
+    }
+    return false;
+  }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -22,57 +38,89 @@ export function EmployerSuccess() {
     }
 
     let attempts = 0;
-    const poll = () => {
-      checkoutStatus(sessionId)
-        .then((data) => {
-          setEmail(data.employerEmail);
-          if (data.paid && data.jobId) {
-            setJobId(data.jobId);
-            setStatus("paid");
-          } else if (attempts < 15) {
-            attempts++;
-            setStatus("pending");
-            setTimeout(poll, 2000);
-          } else {
-            setStatus("pending");
-          }
-        })
-        .catch((e) => {
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const done = await refreshStatus();
+        if (cancelled) return;
+        if (!done && attempts < 20) {
+          attempts++;
+          setTimeout(poll, 2000);
+        }
+      } catch (e) {
+        if (!cancelled) {
           setStatus("error");
           setError(e instanceof Error ? e.message : "Could not verify payment");
-        });
+        }
+      }
     };
+
     poll();
-  }, [sessionId]);
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, refreshStatus]);
 
   async function createAccount(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     try {
+      let activeJobId = jobId;
+      if (!activeJobId && sessionId) {
+        const latest = await checkoutStatus(sessionId);
+        activeJobId = latest.jobId ?? null;
+        if (latest.jobId) setJobId(latest.jobId);
+        if (latest.paid) setStatus("paid");
+      }
+
       await register({ email, password, companyName, formLoadedAt });
-      if (jobId) await linkJob(jobId);
+      if (activeJobId) await linkJob(activeJobId);
+      setAccountCreated(true);
       window.location.href = "/employer/dashboard";
     } catch (err) {
       setError(err instanceof Error ? err.message : "Registration failed");
     }
   }
 
+  const showAccountForm = (status === "paid" || status === "pending") && email && !accountCreated;
+
   return (
     <div className="mx-auto max-w-lg px-4 py-12 sm:px-6">
       <h1 className="font-display text-3xl font-extrabold text-brand-700">Payment received</h1>
 
-      {status === "loading" && <p className="mt-4 text-muted">Confirming your payment…</p>}
+      {status === "loading" && (
+        <p className="mt-4 text-muted">Confirming your payment with Stripe…</p>
+      )}
+
       {status === "pending" && (
-        <p className="mt-4 text-muted">
-          Payment is processing. This page will update when your job is live (usually within a
-          minute).
+        <div className="mt-4 space-y-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p>
+            Your payment succeeded. We&apos;re publishing your job now — this usually takes a few
+            seconds.
+          </p>
+          <button
+            type="button"
+            onClick={() => refreshStatus().catch(() => null)}
+            className="font-bold text-brand-700 underline"
+          >
+            Refresh status
+          </button>
+        </div>
+      )}
+
+      {status === "paid" && (
+        <p className="mt-4 text-brand-700">
+          Your job is live! Create a password below to manage your listing and view applications.
         </p>
       )}
+
       {status === "error" && <ErrorAlert message={error} />}
-      {status === "paid" && (
+
+      {showAccountForm && (
         <>
-          <p className="mt-4 text-brand-700">
-            Your job is live! Create an account to manage listings and view applications.
+          <p className="mt-4 text-sm text-muted">
+            There is no preset password — choose one now for <strong>{email}</strong>.
           </p>
           <form onSubmit={createAccount} className="mt-6 space-y-4">
             <ErrorAlert message={error} />
@@ -94,7 +142,7 @@ export function EmployerSuccess() {
               />
             </label>
             <label className="block">
-              <span className="text-sm font-semibold">Password (8+ characters)</span>
+              <span className="text-sm font-semibold">Create password (8+ characters)</span>
               <input
                 type="password"
                 required
@@ -102,6 +150,7 @@ export function EmployerSuccess() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="mt-1 w-full rounded-lg border px-3 py-2"
+                autoComplete="new-password"
               />
             </label>
             <label className="block">
@@ -121,10 +170,20 @@ export function EmployerSuccess() {
           </form>
           <p className="mt-4 text-center text-sm">
             <Link to="/login" className="font-semibold text-brand-600">
-              Already registered? Sign in
+              Already created an account? Sign in
             </Link>
           </p>
         </>
+      )}
+
+      {!sessionId && (
+        <p className="mt-4 text-sm text-muted">
+          Return here from Stripe after checkout, or sign in at{" "}
+          <Link to="/login" className="font-semibold text-brand-600">
+            /login
+          </Link>{" "}
+          if you already registered.
+        </p>
       )}
     </div>
   );

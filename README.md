@@ -48,13 +48,16 @@ stripe listen --forward-to localhost:8788/api/stripe/webhook
 # Copy whsec_… into .dev.vars → STRIPE_WEBHOOK_SECRET
 ```
 
-### Production webhook
+### Production webhook (recommended)
 
 In Stripe Dashboard → Webhooks → Add endpoint:
 
 - URL: `https://YOUR_DOMAIN/api/stripe/webhook`
 - Event: `checkout.session.completed`
 - Copy signing secret → Cloudflare **Production** env → `STRIPE_WEBHOOK_SECRET`
+
+If the webhook is missing or misconfigured, the success page still publishes the job by
+verifying payment directly with Stripe when you land on `/employer/success?session_id=...`.
 
 ## Admin & seed data
 

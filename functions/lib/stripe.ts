@@ -17,7 +17,7 @@ export async function stripeRequest<T>(
   const res = await fetch(`https://api.stripe.com/v1${path}`, {
     method,
     headers,
-    body: fetchBody,
+    body: method === "GET" ? undefined : fetchBody,
   });
   const data = (await res.json()) as T & { error?: { message?: string } };
   if (!res.ok) {
@@ -29,6 +29,23 @@ export async function stripeRequest<T>(
 export interface CheckoutSession {
   id: string;
   url: string;
+}
+
+export interface StripeCheckoutSessionDetails {
+  id: string;
+  payment_status: string;
+  status: string | null;
+}
+
+export async function getCheckoutSession(
+  secretKey: string,
+  sessionId: string,
+): Promise<StripeCheckoutSessionDetails> {
+  return stripeRequest<StripeCheckoutSessionDetails>(
+    secretKey,
+    `/checkout/sessions/${sessionId}`,
+    "GET",
+  );
 }
 
 export async function createCheckoutSession(
