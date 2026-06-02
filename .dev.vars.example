@@ -1,0 +1,12 @@
+# Copy this file to `.dev.vars` in the project root (same folder as wrangler.toml).
+# `.dev.vars` is gitignored — your real keys stay only on your machine.
+#
+#   cp .dev.vars.example .dev.vars
+#   # then edit .dev.vars with your Stripe TEST keys
+
+STRIPE_SECRET_KEY=sk_test_REPLACE_ME
+STRIPE_WEBHOOK_SECRET=whsec_REPLACE_ME
+APP_URL=http://localhost:8788
+SESSION_SECRET=REPLACE_WITH_openssl_rand_hex_32
+JOB_POSTING_PRICE_CENTS=9900
+ADMIN_EMAILS=your-email@example.com

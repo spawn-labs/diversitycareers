@@ -1,0 +1,64 @@
+[
+  {
+    "title": "Senior Software Engineer",
+    "company": "Inclusive Tech Co.",
+    "description": "Build accessible products with a team committed to diverse hiring. React, TypeScript, and mentorship opportunities.",
+    "location": { "city": "Austin", "state": "TX", "remote": true },
+    "category": "Technology",
+    "payMin": 130000,
+    "payMax": 165000,
+    "payPeriod": "year",
+    "employmentType": "full-time",
+    "applyUrl": "https://example.com/apply/1",
+    "employerEmail": "seed@diversitycareers.local"
+  },
+  {
+    "title": "HR Business Partner",
+    "company": "Unity Health Systems",
+    "description": "Partner with leaders on DEI recruiting strategies and inclusive workplace programs across regional hospitals.",
+    "location": { "city": "Chicago", "state": "IL", "remote": false },
+    "category": "Human Resources",
+    "payMin": 85000,
+    "payMax": 105000,
+    "payPeriod": "year",
+    "employmentType": "full-time",
+    "employerEmail": "seed@diversitycareers.local"
+  },
+  {
+    "title": "Marketing Coordinator",
+    "company": "Bright Futures Agency",
+    "description": "Support campaigns that celebrate diverse voices. Hybrid schedule, growth path to manager role.",
+    "location": { "city": "Atlanta", "state": "GA", "zip": "30303", "remote": false },
+    "category": "Marketing",
+    "payMin": 22,
+    "payMax": 28,
+    "payPeriod": "hour",
+    "employmentType": "full-time",
+    "employerEmail": "seed@diversitycareers.local"
+  },
+  {
+    "title": "Registered Nurse — ICU",
+    "company": "Community Care Network",
+    "description": "Join a Magnet-recognized hospital with employee resource groups and tuition reimbursement.",
+    "location": { "city": "Phoenix", "state": "AZ", "remote": false },
+    "category": "Healthcare",
+    "payMin": 38,
+    "payMax": 48,
+    "payPeriod": "hour",
+    "employmentType": "full-time",
+    "employerEmail": "seed@diversitycareers.local"
+  },
+  {
+    "title": "Remote Customer Success Manager",
+    "company": "Global SaaS Partners",
+    "description": "100% remote role supporting enterprise clients. We actively recruit veterans and caregivers returning to work.",
+    "location": { "remote": true },
+    "category": "Customer Service",
+    "payMin": 70000,
+    "payMax": 90000,
+    "payPeriod": "year",
+    "employmentType": "full-time",
+    "applyEmail": "careers@globalsaas.example",
+    "employerEmail": "seed@diversitycareers.local"
+  }
+]
