@@ -12,12 +12,26 @@ export function defaultHoneypotField(env: Env): string {
   return env.HONEYPOT_FIELD ?? "website_url";
 }
 
-/** Reject bots: filled honeypot or form submitted too fast (< 3s). */
-export function checkSpamBasics(input: SpamCheckInput, honeypotFieldValue?: string): string | null {
+export interface SpamCheckOptions {
+  /** Minimum ms after formLoadedAt before submit is allowed (default 3000). Use 0 for sign-in forms. */
+  minDelayMs?: number;
+}
+
+/** Reject bots: filled honeypot or form submitted too fast. */
+export function checkSpamBasics(
+  input: SpamCheckInput,
+  honeypotFieldValue?: string,
+  options?: SpamCheckOptions,
+): string | null {
   if (honeypotFieldValue && honeypotFieldValue.trim() !== "") {
     return "Submission blocked.";
   }
-  if (input.formLoadedAt && Date.now() - input.formLoadedAt < 3000) {
+  const minDelayMs = options?.minDelayMs ?? 3000;
+  if (
+    minDelayMs > 0 &&
+    input.formLoadedAt &&
+    Date.now() - input.formLoadedAt < minDelayMs
+  ) {
     return "Please wait a moment before submitting.";
   }
   return null;

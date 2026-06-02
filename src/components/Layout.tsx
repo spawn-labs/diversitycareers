@@ -1,26 +1,31 @@
-import { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Outlet, useLocation } from "react-router-dom";
 import { authMe } from "../lib/api";
 import { Header } from "./Header";
 
 export function Layout() {
+  const location = useLocation();
   const [auth, setAuth] = useState<{
     authenticated: boolean;
     email?: string;
     role?: string;
   } | null>(null);
 
-  useEffect(() => {
-    authMe()
+  const refreshAuth = useCallback(() => {
+    return authMe()
       .then(setAuth)
       .catch(() => setAuth({ authenticated: false }));
   }, []);
 
+  useEffect(() => {
+    refreshAuth();
+  }, [location.pathname, refreshAuth]);
+
   return (
     <div className="min-h-dvh flex flex-col">
-      <Header auth={auth} onAuthChange={() => authMe().then(setAuth).catch(() => null)} />
+      <Header auth={auth} onAuthChange={refreshAuth} />
       <main className="flex-1">
-        <Outlet context={{ auth, refreshAuth: () => authMe().then(setAuth) }} />
+        <Outlet context={{ auth, refreshAuth }} />
       </main>
       <footer className="border-t border-stone-200 bg-white py-8 text-center text-sm text-muted">
         <p className="font-display font-bold text-brand-700">Diversity Careers</p>

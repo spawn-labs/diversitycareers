@@ -8,11 +8,15 @@ interface HeaderProps {
 
 export function Header({ auth, onAuthChange }: HeaderProps) {
   const navigate = useNavigate();
+  const session = auth?.authenticated ? auth : null;
 
   async function handleLogout() {
-    await logout();
-    onAuthChange?.();
-    navigate("/");
+    try {
+      await logout();
+    } finally {
+      await onAuthChange?.();
+      navigate("/");
+    }
   }
 
   return (
@@ -31,10 +35,10 @@ export function Header({ auth, onAuthChange }: HeaderProps) {
           >
             Post a Job
           </Link>
-          {auth?.authenticated ? (
+          {auth === null ? null : session ? (
             <>
               <Link
-                to={auth.role === "admin" ? "/admin" : "/employer/dashboard"}
+                to={session.role === "admin" ? "/admin" : "/employer/dashboard"}
                 className="rounded-lg px-3 py-2 text-muted hover:bg-brand-50"
               >
                 Dashboard
@@ -42,7 +46,7 @@ export function Header({ auth, onAuthChange }: HeaderProps) {
               <button
                 type="button"
                 onClick={handleLogout}
-                className="rounded-lg px-3 py-2 text-muted hover:bg-brand-50"
+                className="rounded-lg px-3 py-2 text-brand-700 hover:bg-brand-50"
               >
                 Sign out
               </button>

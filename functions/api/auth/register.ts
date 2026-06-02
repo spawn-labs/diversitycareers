@@ -16,8 +16,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
   const body = (await context.request.json()) as Record<string, unknown>;
   const honeypotField = defaultHoneypotField(context.env);
   const spamErr = checkSpamBasics(
-    { clientIp: ip, formLoadedAt: body.formLoadedAt as number | undefined },
+    { clientIp: ip },
     body[honeypotField] as string | undefined,
+    { minDelayMs: 0 },
   );
   if (spamErr) return errorResponse(spamErr, 400);
 

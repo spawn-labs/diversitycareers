@@ -1,20 +1,25 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useOutletContext } from "react-router-dom";
 import { ErrorAlert } from "../components/ErrorAlert";
 import { authMe, login } from "../lib/api";
 
+type LayoutContext = {
+  refreshAuth: () => Promise<unknown>;
+};
+
 export function Login() {
   const navigate = useNavigate();
+  const { refreshAuth } = useOutletContext<LayoutContext>();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [formLoadedAt] = useState(() => Date.now());
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     try {
-      await login({ email, password, formLoadedAt });
+      await login({ email, password, formLoadedAt: 0 });
+      await refreshAuth();
       const me = await authMe();
       navigate(me.role === "admin" ? "/admin" : "/employer/dashboard");
     } catch (err) {

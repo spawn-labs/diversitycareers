@@ -96,8 +96,8 @@ export function authMe() {
   }>("/api/auth/me");
 }
 
-export function login(body: { email: string; password: string; formLoadedAt: number }) {
-  return api<{ ok: boolean }>("/api/auth/login", {
+export function login(body: { email: string; password: string; formLoadedAt?: number }) {
+  return api<{ ok: boolean; email?: string; role?: string }>("/api/auth/login", {
     method: "POST",
     body: JSON.stringify({ ...body, website_url: "" }),
   });
