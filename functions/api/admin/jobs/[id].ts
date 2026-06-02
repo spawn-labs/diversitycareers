@@ -1,8 +1,8 @@
-import { errorResponse, jsonResponse } from "../../lib/auth";
-import { requireAdmin } from "../../lib/admin-auth";
-import { applyJobUpdates } from "../../lib/jobs";
-import { mutateStore, readStore } from "../../lib/store";
-import type { Job } from "../../lib/types";
+import { errorResponse, jsonResponse } from "../../../lib/auth";
+import { requireAdmin } from "../../../lib/admin-auth";
+import { applyJobUpdates } from "../../../lib/jobs";
+import { mutateStore, readStore } from "../../../lib/store";
+import type { Job } from "../../../lib/types";
 
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   if (!(await requireAdmin(context.request, context.env))) {

@@ -1,0 +1,1885 @@
+------formdata-undici-066233613273
+Content-Disposition: form-data; name="metadata"
+
+{"main_module":"functionsWorker-0.7761064233222048.js"}
+------formdata-undici-066233613273
+Content-Disposition: form-data; name="functionsWorker-0.7761064233222048.js"; filename="functionsWorker-0.7761064233222048.js"
+Content-Type: application/javascript+module
+
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// lib/auth.ts
+var COOKIE_NAME = "dc_session";
+var MAX_AGE = 60 * 60 * 24 * 14;
+function cookieFlags(request) {
+  const host = request ? new URL(request.url).hostname : "";
+  const local = host === "localhost" || host === "127.0.0.1" || host.endsWith(".localhost");
+  return local ? "Path=/; HttpOnly; SameSite=Lax" : "Path=/; HttpOnly; Secure; SameSite=Lax";
+}
+__name(cookieFlags, "cookieFlags");
+function getSecret(env) {
+  if (!env.SESSION_SECRET || env.SESSION_SECRET.length < 16) {
+    throw new Error("SESSION_SECRET must be set (32+ random characters recommended)");
+  }
+  return env.SESSION_SECRET;
+}
+__name(getSecret, "getSecret");
+async function sign(data, secret) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(data));
+  return btoa(String.fromCharCode(...new Uint8Array(sig))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+__name(sign, "sign");
+async function verify(data, signature, secret) {
+  const expected = await sign(data, secret);
+  return expected === signature;
+}
+__name(verify, "verify");
+async function hashPassword(password, salt) {
+  const s = salt ?? btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(16))));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: new TextEncoder().encode(s),
+      iterations: 1e5,
+      hash: "SHA-256"
+    },
+    key,
+    256
+  );
+  const hash = btoa(String.fromCharCode(...new Uint8Array(bits)));
+  return { hash, salt: s };
+}
+__name(hashPassword, "hashPassword");
+async function verifyPassword(password, salt, expectedHash) {
+  const { hash } = await hashPassword(password, salt);
+  return hash === expectedHash;
+}
+__name(verifyPassword, "verifyPassword");
+async function setAuthCookie(payload, env, request) {
+  const body = btoa(JSON.stringify(payload));
+  const sig = await sign(body, getSecret(env));
+  const value = `${body}.${sig}`;
+  return `${COOKIE_NAME}=${value}; ${cookieFlags(request)}; Max-Age=${MAX_AGE}`;
+}
+__name(setAuthCookie, "setAuthCookie");
+async function getAuthSession(request, env) {
+  const cookie = request.headers.get("Cookie") ?? "";
+  const match2 = cookie.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
+  if (!match2) return null;
+  const [body, sig] = match2[1].split(".");
+  if (!body || !sig) return null;
+  try {
+    const valid = await verify(body, sig, getSecret(env));
+    if (!valid) return null;
+    const payload = JSON.parse(atob(body));
+    if (payload.expiresAt < Date.now()) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+__name(getAuthSession, "getAuthSession");
+function clearAuthCookie(request) {
+  return `${COOKIE_NAME}=; ${cookieFlags(request)}; Max-Age=0`;
+}
+__name(clearAuthCookie, "clearAuthCookie");
+function isAdminEmail(email, env) {
+  const list = (env.ADMIN_EMAILS ?? "").split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+  return list.includes(email.toLowerCase());
+}
+__name(isAdminEmail, "isAdminEmail");
+function jsonResponse(data, init) {
+  return new Response(JSON.stringify(data), {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...init?.headers ?? {}
+    }
+  });
+}
+__name(jsonResponse, "jsonResponse");
+function errorResponse(message, status = 400) {
+  return jsonResponse({ error: message }, { status });
+}
+__name(errorResponse, "errorResponse");
+
+// lib/admin-auth.ts
+async function requireAdmin(request, env) {
+  const session = await getAuthSession(request, env);
+  if (!session || session.role !== "admin" || !isAdminEmail(session.email, env)) {
+    return null;
+  }
+  return { userId: session.userId, email: session.email };
+}
+__name(requireAdmin, "requireAdmin");
+
+// lib/types.ts
+var STORE_KEY = "dc:store:v1";
+function emptyStore() {
+  return {
+    jobs: [],
+    users: [],
+    applications: [],
+    pendingCheckouts: [],
+    crawlSources: []
+  };
+}
+__name(emptyStore, "emptyStore");
+
+// lib/store.ts
+async function readStore(kv) {
+  const raw = await kv.get(STORE_KEY);
+  if (!raw) return emptyStore();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return emptyStore();
+  }
+}
+__name(readStore, "readStore");
+async function writeStore(kv, store) {
+  await kv.put(STORE_KEY, JSON.stringify(store));
+}
+__name(writeStore, "writeStore");
+async function mutateStore(kv, fn) {
+  const store = await readStore(kv);
+  await fn(store);
+  await writeStore(kv, store);
+  return store;
+}
+__name(mutateStore, "mutateStore");
+function newId() {
+  return crypto.randomUUID();
+}
+__name(newId, "newId");
+
+// lib/jobs.ts
+var JOB_LISTING_DAYS = 60;
+var MS_PER_DAY = 24 * 60 * 60 * 1e3;
+function normalizeApplyUrl(value) {
+  const raw = value?.trim();
+  if (!raw) return void 0;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://${raw}`;
+}
+__name(normalizeApplyUrl, "normalizeApplyUrl");
+function listingExpiresAt(fromIso) {
+  const base = fromIso ? new Date(fromIso).getTime() : Date.now();
+  return new Date(base + JOB_LISTING_DAYS * MS_PER_DAY).toISOString();
+}
+__name(listingExpiresAt, "listingExpiresAt");
+function getExpiresAt(job) {
+  if (job.expiresAt) return job.expiresAt;
+  return listingExpiresAt(job.paidAt ?? job.createdAt);
+}
+__name(getExpiresAt, "getExpiresAt");
+function isJobListed(job) {
+  if (job.status !== "published") return false;
+  return new Date(getExpiresAt(job)).getTime() > Date.now();
+}
+__name(isJobListed, "isJobListed");
+function expireStaleJobs(jobs) {
+  const now = Date.now();
+  for (const job of jobs) {
+    if (job.status !== "published") continue;
+    if (new Date(getExpiresAt(job)).getTime() <= now) {
+      job.status = "expired";
+      job.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    }
+  }
+}
+__name(expireStaleJobs, "expireStaleJobs");
+function normalizeDraft(draft) {
+  return {
+    ...draft,
+    applyUrl: normalizeApplyUrl(draft.applyUrl)
+  };
+}
+__name(normalizeDraft, "normalizeDraft");
+function createPublishedJob(input, opts) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  const paidAt = opts?.paidAt ?? now;
+  return {
+    id: opts?.id ?? newId(),
+    title: input.title,
+    company: input.company,
+    description: input.description,
+    location: input.location,
+    category: input.category,
+    payMin: input.payMin,
+    payMax: input.payMax,
+    payPeriod: input.payPeriod,
+    employmentType: input.employmentType,
+    applyUrl: normalizeApplyUrl(input.applyUrl),
+    applyEmail: input.applyEmail?.trim() || void 0,
+    employerId: input.employerId,
+    employerEmail: input.employerEmail,
+    status: input.status === "expired" ? "expired" : "published",
+    stripeCheckoutSessionId: input.stripeCheckoutSessionId,
+    paidAt,
+    expiresAt: input.expiresAt ?? listingExpiresAt(paidAt),
+    createdAt: input.createdAt ?? now,
+    updatedAt: now
+  };
+}
+__name(createPublishedJob, "createPublishedJob");
+function applyJobUpdates(existing, patch) {
+  const updated = {
+    ...existing,
+    ...patch,
+    id: existing.id,
+    createdAt: existing.createdAt,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    applyUrl: patch.applyUrl !== void 0 ? normalizeApplyUrl(patch.applyUrl) : existing.applyUrl
+  };
+  if (patch.expiresAt) {
+    updated.expiresAt = patch.expiresAt;
+  } else if (patch.paidAt) {
+    updated.expiresAt = listingExpiresAt(patch.paidAt);
+  } else if (!updated.expiresAt) {
+    updated.expiresAt = listingExpiresAt(updated.paidAt ?? updated.createdAt);
+  }
+  if (updated.status === "published" && !isJobListed(updated)) {
+    updated.status = "expired";
+  }
+  return updated;
+}
+__name(applyJobUpdates, "applyJobUpdates");
+
+// api/admin/jobs/[id].ts
+var onRequestGet = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin(context.request, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  const id = context.params.id;
+  const store = await readStore(context.env.DC_DATA);
+  const job = store.jobs.find((j) => j.id === id);
+  if (!job) return errorResponse("Job not found", 404);
+  return jsonResponse({ job });
+}, "onRequestGet");
+var onRequestPut = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin(context.request, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  const id = context.params.id;
+  const patch = await context.request.json();
+  let updated = null;
+  try {
+    await mutateStore(context.env.DC_DATA, (s) => {
+      const idx = s.jobs.findIndex((j) => j.id === id);
+      if (idx < 0) throw new Error("NOT_FOUND");
+      s.jobs[idx] = applyJobUpdates(s.jobs[idx], patch);
+      updated = s.jobs[idx];
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "NOT_FOUND") {
+      return errorResponse("Job not found", 404);
+    }
+    throw e;
+  }
+  return jsonResponse({ job: updated });
+}, "onRequestPut");
+var onRequestDelete = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin(context.request, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  const id = context.params.id;
+  let removed = false;
+  await mutateStore(context.env.DC_DATA, (s) => {
+    const before = s.jobs.length;
+    s.jobs = s.jobs.filter((j) => j.id !== id);
+    s.applications = s.applications.filter((a) => a.jobId !== id);
+    removed = s.jobs.length < before;
+  });
+  if (!removed) return errorResponse("Job not found", 404);
+  return jsonResponse({ ok: true });
+}, "onRequestDelete");
+
+// lib/crawl.ts
+async function crawlSource(source) {
+  const res = await fetch(source.url, {
+    headers: { "User-Agent": "DiversityCareersBot/1.0 (+https://diversitycareers.example)" }
+  });
+  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+  const text = await res.text();
+  if (source.type === "json") {
+    const data = JSON.parse(text);
+    return parseJsonFeed(data);
+  }
+  if (source.type === "rss") {
+    return parseRss(text);
+  }
+  throw new Error(`Unsupported source type: ${source.type}`);
+}
+__name(crawlSource, "crawlSource");
+function parseJsonFeed(data) {
+  const list = Array.isArray(data) ? data : data?.jobs ?? [];
+  return list.slice(0, 50).map((item) => jsonItemToDraft(item));
+}
+__name(parseJsonFeed, "parseJsonFeed");
+function jsonItemToDraft(item) {
+  const o = item;
+  return {
+    title: String(o.title ?? "Untitled Role"),
+    company: String(o.company ?? o.employer ?? "Hiring Company"),
+    description: String(o.description ?? o.summary ?? ""),
+    location: {
+      city: o.city ? String(o.city) : void 0,
+      state: o.state ? String(o.state) : void 0,
+      zip: o.zip ? String(o.zip) : void 0,
+      remote: Boolean(o.remote)
+    },
+    category: String(o.category ?? "General"),
+    employmentType: o.employmentType ?? "full-time",
+    applyUrl: o.applyUrl ? String(o.applyUrl) : o.url ? String(o.url) : void 0,
+    employerEmail: String(o.employerEmail ?? "import@diversitycareers.local")
+  };
+}
+__name(jsonItemToDraft, "jsonItemToDraft");
+function parseRss(xml) {
+  const items = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)];
+  return items.slice(0, 30).map((m) => {
+    const block = m[1];
+    const title = tag(block, "title") ?? "Job Opening";
+    const description = tag(block, "description") ?? "";
+    const link = tag(block, "link");
+    return {
+      title: decodeXml(title),
+      company: tag(block, "author") ?? "Employer",
+      description: decodeXml(stripHtml(description)),
+      location: { remote: /remote/i.test(description) },
+      category: "Imported",
+      employmentType: "full-time",
+      applyUrl: link ?? void 0,
+      employerEmail: "import@diversitycareers.local"
+    };
+  });
+}
+__name(parseRss, "parseRss");
+function tag(block, name) {
+  const m = block.match(new RegExp(`<${name}[^>]*>([\\s\\S]*?)<\\/${name}>`, "i"));
+  return m?.[1]?.trim();
+}
+__name(tag, "tag");
+function stripHtml(s) {
+  return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+}
+__name(stripHtml, "stripHtml");
+function decodeXml(s) {
+  return s.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+}
+__name(decodeXml, "decodeXml");
+function draftsToPublishedJobs(drafts, employerId) {
+  const now = (/* @__PURE__ */ new Date()).toISOString();
+  return drafts.map(
+    (d) => createPublishedJob(
+      {
+        ...d,
+        employerId
+      },
+      { paidAt: now }
+    )
+  );
+}
+__name(draftsToPublishedJobs, "draftsToPublishedJobs");
+
+// api/admin/crawl.ts
+var onRequestPost = /* @__PURE__ */ __name(async (context) => {
+  const session = await getAuthSession(context.request, context.env);
+  if (!session || session.role !== "admin" || !isAdminEmail(session.email, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  const body = await context.request.json();
+  const sourceId = String(body.sourceId ?? "");
+  const store = await readStore(context.env.DC_DATA);
+  const source = store.crawlSources.find((s) => s.id === sourceId && s.enabled);
+  if (!source) return errorResponse("Source not found", 404);
+  let drafts;
+  try {
+    drafts = await crawlSource(source);
+  } catch (e) {
+    return errorResponse(e instanceof Error ? e.message : "Crawl failed", 502);
+  }
+  const jobs = draftsToPublishedJobs(drafts);
+  await mutateStore(context.env.DC_DATA, (s) => {
+    s.jobs.push(...jobs);
+    const src = s.crawlSources.find((x) => x.id === sourceId);
+    if (src) src.lastCrawledAt = (/* @__PURE__ */ new Date()).toISOString();
+  });
+  return jsonResponse({ imported: jobs.length, jobs });
+}, "onRequestPost");
+
+// api/admin/import-seed.ts
+var onRequestPost2 = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin(context.request, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  const body = await context.request.json();
+  const incoming = body.jobs ?? [];
+  if (!incoming.length) return errorResponse("No jobs provided", 400);
+  let count = 0;
+  await mutateStore(context.env.DC_DATA, (s) => {
+    for (const raw of incoming) {
+      if (!raw.title || !raw.company) continue;
+      s.jobs.push(
+        createPublishedJob({
+          title: raw.title,
+          company: raw.company,
+          description: raw.description ?? "",
+          location: raw.location ?? { remote: false },
+          category: raw.category ?? "General",
+          payMin: raw.payMin,
+          payMax: raw.payMax,
+          payPeriod: raw.payPeriod,
+          employmentType: raw.employmentType ?? "full-time",
+          applyUrl: raw.applyUrl,
+          applyEmail: raw.applyEmail,
+          employerEmail: raw.employerEmail ?? "seed@diversitycareers.local"
+        })
+      );
+      count++;
+    }
+  });
+  return jsonResponse({ imported: count });
+}, "onRequestPost");
+
+// lib/parse-import.ts
+function parseCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      inQuotes = !inQuotes;
+      continue;
+    }
+    if (ch === "," && !inQuotes) {
+      out.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+__name(parseCsvLine, "parseCsvLine");
+function rowToJob(row) {
+  const title = row.title ?? row.job_title ?? "";
+  const company = row.company ?? row.employer ?? "";
+  if (!title || !company) return null;
+  const remote = row.remote === "true" || row.remote === "1" || row.remote?.toLowerCase() === "yes";
+  return {
+    title,
+    company,
+    description: row.description ?? row.summary ?? "",
+    location: {
+      city: row.city || void 0,
+      state: row.state || void 0,
+      zip: row.zip || void 0,
+      remote
+    },
+    category: row.category || "General",
+    employmentType: row.employmenttype || row.employment_type || "full-time",
+    payMin: row.paymin || row.pay_min ? Number(row.paymin || row.pay_min) : void 0,
+    payMax: row.paymax || row.pay_max ? Number(row.paymax || row.pay_max) : void 0,
+    payPeriod: row.payperiod || row.pay_period,
+    applyUrl: row.applyurl || row.apply_url || row.url || void 0,
+    applyEmail: row.applyemail || row.apply_email || void 0,
+    employerEmail: row.employeremail || row.employer_email || "seed@diversitycareers.local"
+  };
+}
+__name(rowToJob, "rowToJob");
+function parseCsvJobs(text) {
+  const lines = text.trim().split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = parseCsvLine(lines[0]).map((h) => h.toLowerCase().replace(/\s+/g, ""));
+  const jobs = [];
+  for (const line of lines.slice(1)) {
+    const values = parseCsvLine(line);
+    const row = {};
+    headers.forEach((h, i) => {
+      row[h] = values[i] ?? "";
+    });
+    const job = rowToJob(row);
+    if (job) jobs.push(job);
+  }
+  return jobs;
+}
+__name(parseCsvJobs, "parseCsvJobs");
+function parseJsonJobs(text) {
+  const data = JSON.parse(text);
+  const list = Array.isArray(data) ? data : data?.jobs ?? [];
+  const jobs = [];
+  for (const item of list) {
+    const o = item;
+    const row = {};
+    for (const [k, v] of Object.entries(o)) {
+      if (typeof v === "string" || typeof v === "number") {
+        row[k.toLowerCase()] = String(v);
+      }
+    }
+    if (o.location && typeof o.location === "object") {
+      const loc = o.location;
+      if (loc.city) row.city = String(loc.city);
+      if (loc.state) row.state = String(loc.state);
+      if (loc.zip) row.zip = String(loc.zip);
+      if (loc.remote) row.remote = String(loc.remote);
+    }
+    const job = rowToJob(row);
+    if (job) jobs.push(job);
+  }
+  return jobs;
+}
+__name(parseJsonJobs, "parseJsonJobs");
+
+// api/admin/import-upload.ts
+var onRequestPost3 = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin(context.request, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  const body = await context.request.json();
+  const format = body.format;
+  const content = body.content?.trim();
+  if (!format || !content) {
+    return errorResponse("format (csv|json) and content are required", 400);
+  }
+  let rows;
+  try {
+    rows = format === "csv" ? parseCsvJobs(content) : parseJsonJobs(content);
+  } catch {
+    return errorResponse(`Invalid ${format.toUpperCase()} file`, 400);
+  }
+  if (!rows.length) {
+    return errorResponse("No valid job rows found in file", 400);
+  }
+  let imported = 0;
+  await mutateStore(context.env.DC_DATA, (s) => {
+    for (const row of rows) {
+      s.jobs.push(
+        createPublishedJob({
+          title: row.title,
+          company: row.company,
+          description: row.description,
+          location: row.location,
+          category: row.category,
+          employmentType: row.employmentType,
+          payMin: row.payMin,
+          payMax: row.payMax,
+          payPeriod: row.payPeriod,
+          applyUrl: row.applyUrl,
+          applyEmail: row.applyEmail,
+          employerEmail: row.employerEmail
+        })
+      );
+      imported++;
+    }
+  });
+  return jsonResponse({ imported, totalRows: rows.length });
+}, "onRequestPost");
+
+// api/admin/jobs.ts
+var onRequestGet2 = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin(context.request, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  await mutateStore(context.env.DC_DATA, (s) => {
+    expireStaleJobs(s.jobs);
+  });
+  const jobs = (await readStore(context.env.DC_DATA)).jobs.sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  return jsonResponse({ jobs });
+}, "onRequestGet");
+var onRequestPost4 = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin(context.request, context.env)) {
+    return errorResponse("Admin access required", 403);
+  }
+  const body = await context.request.json();
+  if (!body.title || !body.company || !body.description) {
+    return errorResponse("title, company, and description are required", 400);
+  }
+  const location = body.location ?? { remote: false };
+  const job = createPublishedJob({
+    title: body.title,
+    company: body.company,
+    description: body.description,
+    location,
+    category: body.category ?? "General",
+    employmentType: body.employmentType ?? "full-time",
+    payMin: body.payMin,
+    payMax: body.payMax,
+    payPeriod: body.payPeriod,
+    applyUrl: body.applyUrl,
+    applyEmail: body.applyEmail,
+    employerEmail: body.employerEmail ?? "admin@diversitycareers.local",
+    employerId: body.employerId,
+    status: body.status === "expired" ? "expired" : "published",
+    expiresAt: body.expiresAt
+  });
+  await mutateStore(context.env.DC_DATA, (s) => {
+    s.jobs.push(job);
+  });
+  return jsonResponse({ job }, { status: 201 });
+}, "onRequestPost");
+
+// api/admin/sources.ts
+async function requireAdmin2(context) {
+  const session = await getAuthSession(context.request, context.env);
+  if (!session || session.role !== "admin" || !isAdminEmail(session.email, context.env)) {
+    return null;
+  }
+  return session;
+}
+__name(requireAdmin2, "requireAdmin");
+var onRequestGet3 = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin2(context)) return errorResponse("Admin access required", 403);
+  const store = await readStore(context.env.DC_DATA);
+  return jsonResponse({ sources: store.crawlSources });
+}, "onRequestGet");
+var onRequestPost5 = /* @__PURE__ */ __name(async (context) => {
+  if (!await requireAdmin2(context)) return errorResponse("Admin access required", 403);
+  const body = await context.request.json();
+  if (!body.name || !body.url || !body.type) {
+    return errorResponse("name, url, and type (rss|json) required", 400);
+  }
+  const source = {
+    id: newId(),
+    name: body.name,
+    url: body.url,
+    type: body.type === "json" ? "json" : "rss",
+    enabled: body.enabled !== false
+  };
+  await mutateStore(context.env.DC_DATA, (s) => {
+    s.crawlSources.push(source);
+  });
+  return jsonResponse({ source });
+}, "onRequestPost");
+
+// lib/spam.ts
+var RATE_WINDOW_MS = 6e4;
+var MAX_REQUESTS_PER_WINDOW = 8;
+function defaultHoneypotField(env) {
+  return env.HONEYPOT_FIELD ?? "website_url";
+}
+__name(defaultHoneypotField, "defaultHoneypotField");
+function checkSpamBasics(input, honeypotFieldValue) {
+  if (honeypotFieldValue && honeypotFieldValue.trim() !== "") {
+    return "Submission blocked.";
+  }
+  if (input.formLoadedAt && Date.now() - input.formLoadedAt < 3e3) {
+    return "Please wait a moment before submitting.";
+  }
+  return null;
+}
+__name(checkSpamBasics, "checkSpamBasics");
+async function checkRateLimit(kv, clientIp2) {
+  const key = `rate:${clientIp2}`;
+  const raw = await kv.get(key);
+  const now = Date.now();
+  let count = 0;
+  let windowStart = now;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (now - parsed.windowStart < RATE_WINDOW_MS) {
+        count = parsed.count;
+        windowStart = parsed.windowStart;
+      }
+    } catch {
+    }
+  }
+  if (count >= MAX_REQUESTS_PER_WINDOW) {
+    return "Too many requests. Please try again later.";
+  }
+  await kv.put(
+    key,
+    JSON.stringify({ count: count + 1, windowStart }),
+    { expirationTtl: 120 }
+  );
+  return null;
+}
+__name(checkRateLimit, "checkRateLimit");
+function clientIp(request) {
+  return request.headers.get("CF-Connecting-IP") ?? request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ?? "unknown";
+}
+__name(clientIp, "clientIp");
+
+// api/auth/login.ts
+var onRequestPost6 = /* @__PURE__ */ __name(async (context) => {
+  const ip = clientIp(context.request);
+  const rateErr = await checkRateLimit(context.env.DC_DATA, ip);
+  if (rateErr) return errorResponse(rateErr, 429);
+  const body = await context.request.json();
+  const honeypotField = defaultHoneypotField(context.env);
+  const spamErr = checkSpamBasics(
+    { clientIp: ip, formLoadedAt: body.formLoadedAt },
+    body[honeypotField]
+  );
+  if (spamErr) return errorResponse(spamErr, 400);
+  const email = String(body.email ?? "").trim().toLowerCase();
+  const password = String(body.password ?? "");
+  const store = await readStore(context.env.DC_DATA);
+  const user = store.users.find((u) => u.email === email);
+  if (!user) return errorResponse("Invalid email or password.", 401);
+  const valid = await verifyPassword(password, user.salt, user.passwordHash);
+  if (!valid) return errorResponse("Invalid email or password.", 401);
+  const cookie = await setAuthCookie(
+    {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      expiresAt: Date.now() + 14 * 24 * 60 * 60 * 1e3
+    },
+    context.env,
+    context.request
+  );
+  return jsonResponse(
+    { ok: true, email: user.email, role: user.role },
+    { headers: { "Set-Cookie": cookie } }
+  );
+}, "onRequestPost");
+
+// api/auth/logout.ts
+var onRequestPost7 = /* @__PURE__ */ __name(async (context) => {
+  return jsonResponse(
+    { ok: true },
+    { headers: { "Set-Cookie": clearAuthCookie(context.request) } }
+  );
+}, "onRequestPost");
+
+// api/auth/me.ts
+var onRequestGet4 = /* @__PURE__ */ __name(async (context) => {
+  const session = await getAuthSession(context.request, context.env);
+  if (!session) return jsonResponse({ authenticated: false });
+  const store = await readStore(context.env.DC_DATA);
+  const user = store.users.find((u) => u.id === session.userId);
+  return jsonResponse({
+    authenticated: true,
+    email: session.email,
+    role: session.role,
+    companyName: user?.companyName
+  });
+}, "onRequestGet");
+
+// api/auth/register.ts
+var onRequestPost8 = /* @__PURE__ */ __name(async (context) => {
+  const ip = clientIp(context.request);
+  const rateErr = await checkRateLimit(context.env.DC_DATA, ip);
+  if (rateErr) return errorResponse(rateErr, 429);
+  const body = await context.request.json();
+  const honeypotField = defaultHoneypotField(context.env);
+  const spamErr = checkSpamBasics(
+    { clientIp: ip, formLoadedAt: body.formLoadedAt },
+    body[honeypotField]
+  );
+  if (spamErr) return errorResponse(spamErr, 400);
+  const email = String(body.email ?? "").trim().toLowerCase();
+  const password = String(body.password ?? "");
+  const companyName = body.companyName ? String(body.companyName).trim() : void 0;
+  if (!email.includes("@") || password.length < 8) {
+    return errorResponse("Valid email and password (8+ characters) required.", 400);
+  }
+  let userId = "";
+  try {
+    await mutateStore(context.env.DC_DATA, async (s) => {
+      if (s.users.some((u) => u.email === email)) {
+        throw new Error("EMAIL_EXISTS");
+      }
+      const { hash, salt } = await hashPassword(password);
+      userId = newId();
+      s.users.push({
+        id: userId,
+        email,
+        passwordHash: hash,
+        salt,
+        role: isAdminEmail(email, context.env) ? "admin" : "employer",
+        companyName,
+        createdAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    });
+  } catch (e) {
+    if (e instanceof Error && e.message === "EMAIL_EXISTS") {
+      return errorResponse("An account with this email already exists.", 409);
+    }
+    throw e;
+  }
+  const cookie = await setAuthCookie(
+    {
+      userId,
+      email,
+      role: isAdminEmail(email, context.env) ? "admin" : "employer",
+      expiresAt: Date.now() + 14 * 24 * 60 * 60 * 1e3
+    },
+    context.env,
+    context.request
+  );
+  return jsonResponse(
+    { ok: true, userId, email },
+    { headers: { "Set-Cookie": cookie } }
+  );
+}, "onRequestPost");
+
+// api/employer/jobs.ts
+var onRequestGet5 = /* @__PURE__ */ __name(async (context) => {
+  const session = await getAuthSession(context.request, context.env);
+  if (!session) return errorResponse("Login required", 401);
+  await mutateStore(context.env.DC_DATA, (s) => {
+    expireStaleJobs(s.jobs);
+  });
+  const store = await readStore(context.env.DC_DATA);
+  const jobs = store.jobs.filter(
+    (j) => j.employerId === session.userId || j.employerEmail === session.email
+  );
+  const applications = store.applications.filter(
+    (a) => jobs.some((j) => j.id === a.jobId)
+  );
+  return jsonResponse({ jobs, applications });
+}, "onRequestGet");
+
+// api/employer/link-job.ts
+var onRequestPost9 = /* @__PURE__ */ __name(async (context) => {
+  const session = await getAuthSession(context.request, context.env);
+  if (!session) return errorResponse("Login required", 401);
+  const body = await context.request.json();
+  const jobId = String(body.jobId ?? "");
+  if (!jobId) return errorResponse("jobId required", 400);
+  let linked = false;
+  await mutateStore(context.env.DC_DATA, (s) => {
+    const job = s.jobs.find((j) => j.id === jobId);
+    if (!job) throw new Error("NOT_FOUND");
+    if (job.employerEmail !== session.email) throw new Error("FORBIDDEN");
+    job.employerId = session.userId;
+    job.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    linked = true;
+  }).catch((e) => {
+    if (e instanceof Error && e.message === "NOT_FOUND") return null;
+    if (e instanceof Error && e.message === "FORBIDDEN") return "forbidden";
+    throw e;
+  });
+  if (linked === "forbidden") return errorResponse("Not your job posting", 403);
+  if (!linked) return errorResponse("Job not found", 404);
+  return jsonResponse({ ok: true });
+}, "onRequestPost");
+
+// lib/search.ts
+function normalize(s) {
+  return s.toLowerCase().trim();
+}
+__name(normalize, "normalize");
+function matchesKeyword(job, q) {
+  const needle = normalize(q);
+  const hay = [
+    job.title,
+    job.company,
+    job.description,
+    job.category,
+    job.location.city,
+    job.location.state,
+    job.location.zip
+  ].filter(Boolean).join(" ").toLowerCase();
+  return hay.includes(needle);
+}
+__name(matchesKeyword, "matchesKeyword");
+function locationMatch(job, params) {
+  if (params.remote === true && !job.location.remote) return false;
+  if (params.city && job.location.city) {
+    if (normalize(job.location.city) !== normalize(params.city)) return false;
+  }
+  if (params.state && job.location.state) {
+    if (normalize(job.location.state) !== normalize(params.state)) return false;
+  }
+  if (params.zip && job.location.zip) {
+    if (job.location.zip.slice(0, 5) !== params.zip.slice(0, 5)) return false;
+  }
+  return true;
+}
+__name(locationMatch, "locationMatch");
+function searchJobs(jobs, params) {
+  return jobs.filter((j) => isJobListed(j)).filter((j) => {
+    if (params.q && !matchesKeyword(j, params.q)) return false;
+    if (!locationMatch(j, params)) return false;
+    if (params.category && normalize(j.category) !== normalize(params.category))
+      return false;
+    if (params.employmentType && j.employmentType !== params.employmentType)
+      return false;
+    if (params.payMin != null && (j.payMax ?? j.payMin ?? 0) < params.payMin) return false;
+    return true;
+  }).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+__name(searchJobs, "searchJobs");
+function facetCounts(jobs) {
+  const categories = {};
+  const states = {};
+  const types = {};
+  let remoteCount = 0;
+  for (const job of jobs) {
+    categories[job.category] = (categories[job.category] ?? 0) + 1;
+    if (job.location.state) {
+      states[job.location.state] = (states[job.location.state] ?? 0) + 1;
+    }
+    types[job.employmentType] = (types[job.employmentType] ?? 0) + 1;
+    if (job.location.remote) remoteCount++;
+  }
+  return { categories, states, types, remoteCount };
+}
+__name(facetCounts, "facetCounts");
+
+// api/jobs/search.ts
+var onRequestGet6 = /* @__PURE__ */ __name(async (context) => {
+  const url = new URL(context.request.url);
+  const params = {
+    q: url.searchParams.get("q") ?? void 0,
+    city: url.searchParams.get("city") ?? void 0,
+    state: url.searchParams.get("state") ?? void 0,
+    zip: url.searchParams.get("zip") ?? void 0,
+    remote: url.searchParams.get("remote") === "true" ? true : void 0,
+    category: url.searchParams.get("category") ?? void 0,
+    employmentType: url.searchParams.get("employmentType") ?? void 0,
+    payMin: url.searchParams.get("payMin") ? Number(url.searchParams.get("payMin")) : void 0
+  };
+  await mutateStore(context.env.DC_DATA, (s) => {
+    expireStaleJobs(s.jobs);
+  });
+  const store = await readStore(context.env.DC_DATA);
+  const results = searchJobs(store.jobs, params);
+  const facets = facetCounts(
+    searchJobs(store.jobs, {
+      q: params.q,
+      city: params.city,
+      state: params.state,
+      zip: params.zip
+    })
+  );
+  const listed = store.jobs.filter((j) => isJobListed(j));
+  return jsonResponse({
+    results,
+    total: results.length,
+    facets,
+    categories: [...new Set(listed.map((j) => j.category))].sort()
+  });
+}, "onRequestGet");
+
+// lib/stripe.ts
+async function stripeRequest(secretKey, path, method, body) {
+  const headers = {
+    Authorization: `Bearer ${secretKey}`
+  };
+  let fetchBody;
+  if (body) {
+    headers["Content-Type"] = "application/x-www-form-urlencoded";
+    fetchBody = new URLSearchParams(body).toString();
+  }
+  const res = await fetch(`https://api.stripe.com/v1${path}`, {
+    method,
+    headers,
+    body: method === "GET" ? void 0 : fetchBody
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error?.message ?? `Stripe error ${res.status}`);
+  }
+  return data;
+}
+__name(stripeRequest, "stripeRequest");
+async function getCheckoutSession(secretKey, sessionId) {
+  return stripeRequest(
+    secretKey,
+    `/checkout/sessions/${sessionId}`,
+    "GET"
+  );
+}
+__name(getCheckoutSession, "getCheckoutSession");
+async function createCheckoutSession(env, opts) {
+  const priceCents = env.JOB_POSTING_PRICE_CENTS ?? "9900";
+  const appUrl = env.APP_URL.replace(/\/$/, "");
+  const session = await stripeRequest(
+    env.STRIPE_SECRET_KEY,
+    "/checkout/sessions",
+    "POST",
+    {
+      mode: "payment",
+      "line_items[0][price_data][currency]": "usd",
+      "line_items[0][price_data][unit_amount]": priceCents,
+      "line_items[0][price_data][product_data][name]": "Diversity Careers Job Posting",
+      "line_items[0][price_data][product_data][description]": "60-day featured job listing for diversity-focused hiring",
+      "line_items[0][quantity]": "1",
+      customer_email: opts.employerEmail,
+      success_url: `${appUrl}${opts.successPath}?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${appUrl}${opts.cancelPath}`,
+      "metadata[pending_id]": opts.pendingId,
+      "metadata[employer_email]": opts.employerEmail
+    }
+  );
+  return { id: session.id, url: session.url };
+}
+__name(createCheckoutSession, "createCheckoutSession");
+async function verifyWebhookSignature(payload, signatureHeader, secret) {
+  const parts = signatureHeader.split(",").reduce(
+    (acc, part) => {
+      const [k, v] = part.split("=");
+      if (k === "t") acc.t = v;
+      if (k === "v1") acc.v1 = v;
+      return acc;
+    },
+    { t: "", v1: "" }
+  );
+  if (!parts.t || !parts.v1) return false;
+  const signed = `${parts.t}.${payload}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(signed));
+  const expected = [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return timingSafeEqual(expected, parts.v1);
+}
+__name(verifyWebhookSignature, "verifyWebhookSignature");
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let out = 0;
+  for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return out === 0;
+}
+__name(timingSafeEqual, "timingSafeEqual");
+
+// lib/fulfill-checkout.ts
+async function fulfillCheckoutIfPaid(kv, stripeSessionId, stripeSecretKey) {
+  const store = await readStore(kv);
+  const pending = store.pendingCheckouts.find(
+    (p) => p.stripeCheckoutSessionId === stripeSessionId
+  );
+  if (!pending) return { fulfilled: false };
+  if (pending.status === "paid" && pending.jobId) {
+    return {
+      fulfilled: true,
+      jobId: pending.jobId,
+      employerEmail: pending.employerEmail
+    };
+  }
+  const session = await getCheckoutSession(stripeSecretKey, stripeSessionId);
+  const paid = session.payment_status === "paid" || session.status === "complete";
+  if (!paid) {
+    return { fulfilled: false, employerEmail: pending.employerEmail };
+  }
+  let jobId;
+  await mutateStore(kv, (s) => {
+    const p = s.pendingCheckouts.find(
+      (x) => x.stripeCheckoutSessionId === stripeSessionId
+    );
+    if (!p) return;
+    if (p.status === "paid" && p.jobId) {
+      jobId = p.jobId;
+      return;
+    }
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const draft = normalizeDraft(p.draft);
+    const job = createPublishedJob(
+      {
+        ...draft,
+        stripeCheckoutSessionId: stripeSessionId
+      },
+      { paidAt: now }
+    );
+    s.jobs.push(job);
+    p.status = "paid";
+    p.jobId = job.id;
+    jobId = job.id;
+  });
+  return {
+    fulfilled: Boolean(jobId),
+    jobId,
+    employerEmail: pending.employerEmail
+  };
+}
+__name(fulfillCheckoutIfPaid, "fulfillCheckoutIfPaid");
+
+// api/stripe/checkout-status.ts
+var onRequestGet7 = /* @__PURE__ */ __name(async (context) => {
+  const sessionId = new URL(context.request.url).searchParams.get("session_id");
+  if (!sessionId) return errorResponse("session_id required", 400);
+  if (!context.env.STRIPE_SECRET_KEY?.startsWith("sk_")) {
+    return errorResponse("Stripe is not configured on the server.", 503);
+  }
+  const result = await fulfillCheckoutIfPaid(
+    context.env.DC_DATA,
+    sessionId,
+    context.env.STRIPE_SECRET_KEY
+  );
+  const store = await readStore(context.env.DC_DATA);
+  const pending = store.pendingCheckouts.find(
+    (p) => p.stripeCheckoutSessionId === sessionId
+  );
+  if (!pending) return errorResponse("Checkout not found", 404);
+  const job = pending.jobId ? store.jobs.find((j) => j.id === pending.jobId) : void 0;
+  return jsonResponse({
+    status: pending.status,
+    paid: pending.status === "paid",
+    jobId: pending.jobId,
+    job,
+    employerEmail: pending.employerEmail,
+    fulfilledViaApi: result.fulfilled && pending.status === "paid"
+  });
+}, "onRequestGet");
+
+// api/stripe/create-checkout.ts
+var onRequestPost10 = /* @__PURE__ */ __name(async (context) => {
+  if (!context.env.STRIPE_SECRET_KEY?.startsWith("sk_")) {
+    return errorResponse("Stripe is not configured on the server.", 503);
+  }
+  const ip = clientIp(context.request);
+  const rateErr = await checkRateLimit(context.env.DC_DATA, ip);
+  if (rateErr) return errorResponse(rateErr, 429);
+  const body = await context.request.json();
+  const honeypotField = defaultHoneypotField(context.env);
+  const spamErr = checkSpamBasics(
+    { clientIp: ip, formLoadedAt: body.formLoadedAt },
+    body[honeypotField]
+  );
+  if (spamErr) return errorResponse(spamErr, 400);
+  const rawDraft = body.draft;
+  if (!rawDraft?.title || !rawDraft.company || !rawDraft.description || !rawDraft.employerEmail) {
+    return errorResponse("Complete job details before payment.", 400);
+  }
+  if (!rawDraft.employerEmail.includes("@")) {
+    return errorResponse("Valid employer email required.", 400);
+  }
+  const draft = normalizeDraft(rawDraft);
+  const pendingId = newId();
+  let checkoutUrl = "";
+  await mutateStore(context.env.DC_DATA, async (s) => {
+    const session = await createCheckoutSession(context.env, {
+      employerEmail: draft.employerEmail,
+      pendingId,
+      successPath: "/employer/success",
+      cancelPath: "/employer/post"
+    });
+    s.pendingCheckouts.push({
+      id: pendingId,
+      draft,
+      employerEmail: draft.employerEmail,
+      stripeCheckoutSessionId: session.id,
+      status: "pending",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+    checkoutUrl = session.url;
+  });
+  return jsonResponse({ checkoutUrl, pendingId });
+}, "onRequestPost");
+
+// api/stripe/webhook.ts
+var onRequestPost11 = /* @__PURE__ */ __name(async (context) => {
+  const signature = context.request.headers.get("Stripe-Signature") ?? "";
+  const payload = await context.request.text();
+  if (!context.env.STRIPE_WEBHOOK_SECRET) {
+    return new Response("Webhook secret not configured", { status: 503 });
+  }
+  const valid = await verifyWebhookSignature(
+    payload,
+    signature,
+    context.env.STRIPE_WEBHOOK_SECRET
+  );
+  if (!valid) return new Response("Invalid signature", { status: 400 });
+  const event = JSON.parse(payload);
+  if (event.type === "checkout.session.completed") {
+    const sessionId = event.data.object.id;
+    if (context.env.STRIPE_SECRET_KEY?.startsWith("sk_")) {
+      await fulfillCheckoutIfPaid(
+        context.env.DC_DATA,
+        sessionId,
+        context.env.STRIPE_SECRET_KEY
+      );
+    }
+  }
+  return new Response(JSON.stringify({ received: true }), {
+    headers: { "Content-Type": "application/json" }
+  });
+}, "onRequestPost");
+
+// api/jobs/[id].ts
+var onRequestGet8 = /* @__PURE__ */ __name(async (context) => {
+  const id = context.params.id;
+  await mutateStore(context.env.DC_DATA, (s) => {
+    expireStaleJobs(s.jobs);
+  });
+  const store = await readStore(context.env.DC_DATA);
+  const job = store.jobs.find((j) => j.id === id);
+  if (!job || !isJobListed(job)) return errorResponse("Job not found", 404);
+  return jsonResponse({ job });
+}, "onRequestGet");
+
+// api/applications/index.ts
+var onRequestPost12 = /* @__PURE__ */ __name(async (context) => {
+  const ip = clientIp(context.request);
+  const rateErr = await checkRateLimit(context.env.DC_DATA, ip);
+  if (rateErr) return errorResponse(rateErr, 429);
+  let body;
+  try {
+    body = await context.request.json();
+  } catch {
+    return errorResponse("Invalid JSON", 400);
+  }
+  const honeypotField = defaultHoneypotField(context.env);
+  const spamErr = checkSpamBasics(
+    {
+      clientIp: ip,
+      formLoadedAt: body.formLoadedAt
+    },
+    body[honeypotField]
+  );
+  if (spamErr) return errorResponse(spamErr, 400);
+  const jobId = String(body.jobId ?? "");
+  const name = String(body.name ?? "").trim();
+  const email = String(body.email ?? "").trim();
+  const message = body.message ? String(body.message).trim() : void 0;
+  const phone = body.phone ? String(body.phone).trim() : void 0;
+  if (!jobId || !name || !email || !email.includes("@")) {
+    return errorResponse("Job, name, and valid email are required.", 400);
+  }
+  const store = await mutateStore(context.env.DC_DATA, (s) => {
+    const job = s.jobs.find((j) => j.id === jobId && j.status === "published");
+    if (!job) throw new Error("JOB_NOT_FOUND");
+    s.applications.push({
+      id: newId(),
+      jobId,
+      name,
+      email,
+      phone,
+      message,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    });
+  }).catch((e) => {
+    if (e instanceof Error && e.message === "JOB_NOT_FOUND") return null;
+    throw e;
+  });
+  if (!store) return errorResponse("Job not found", 404);
+  return jsonResponse({ ok: true, message: "Application submitted successfully." });
+}, "onRequestPost");
+
+// ../.wrangler/tmp/pages-TpiFdq/functionsRoutes-0.003188711747580397.mjs
+var routes = [
+  {
+    routePath: "/api/admin/jobs/:id",
+    mountPath: "/api/admin/jobs",
+    method: "DELETE",
+    middlewares: [],
+    modules: [onRequestDelete]
+  },
+  {
+    routePath: "/api/admin/jobs/:id",
+    mountPath: "/api/admin/jobs",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet]
+  },
+  {
+    routePath: "/api/admin/jobs/:id",
+    mountPath: "/api/admin/jobs",
+    method: "PUT",
+    middlewares: [],
+    modules: [onRequestPut]
+  },
+  {
+    routePath: "/api/admin/crawl",
+    mountPath: "/api/admin",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost]
+  },
+  {
+    routePath: "/api/admin/import-seed",
+    mountPath: "/api/admin",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost2]
+  },
+  {
+    routePath: "/api/admin/import-upload",
+    mountPath: "/api/admin",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost3]
+  },
+  {
+    routePath: "/api/admin/jobs",
+    mountPath: "/api/admin",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet2]
+  },
+  {
+    routePath: "/api/admin/jobs",
+    mountPath: "/api/admin",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost4]
+  },
+  {
+    routePath: "/api/admin/sources",
+    mountPath: "/api/admin",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet3]
+  },
+  {
+    routePath: "/api/admin/sources",
+    mountPath: "/api/admin",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost5]
+  },
+  {
+    routePath: "/api/auth/login",
+    mountPath: "/api/auth",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost6]
+  },
+  {
+    routePath: "/api/auth/logout",
+    mountPath: "/api/auth",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost7]
+  },
+  {
+    routePath: "/api/auth/me",
+    mountPath: "/api/auth",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet4]
+  },
+  {
+    routePath: "/api/auth/register",
+    mountPath: "/api/auth",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost8]
+  },
+  {
+    routePath: "/api/employer/jobs",
+    mountPath: "/api/employer",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet5]
+  },
+  {
+    routePath: "/api/employer/link-job",
+    mountPath: "/api/employer",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost9]
+  },
+  {
+    routePath: "/api/jobs/search",
+    mountPath: "/api/jobs",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet6]
+  },
+  {
+    routePath: "/api/stripe/checkout-status",
+    mountPath: "/api/stripe",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet7]
+  },
+  {
+    routePath: "/api/stripe/create-checkout",
+    mountPath: "/api/stripe",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost10]
+  },
+  {
+    routePath: "/api/stripe/webhook",
+    mountPath: "/api/stripe",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost11]
+  },
+  {
+    routePath: "/api/jobs/:id",
+    mountPath: "/api/jobs",
+    method: "GET",
+    middlewares: [],
+    modules: [onRequestGet8]
+  },
+  {
+    routePath: "/api/applications",
+    mountPath: "/api/applications",
+    method: "POST",
+    middlewares: [],
+    modules: [onRequestPost12]
+  }
+];
+
+// ../node_modules/path-to-regexp/dist.es2015/index.js
+function lexer(str) {
+  var tokens = [];
+  var i = 0;
+  while (i < str.length) {
+    var char = str[i];
+    if (char === "*" || char === "+" || char === "?") {
+      tokens.push({ type: "MODIFIER", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === "\\") {
+      tokens.push({ type: "ESCAPED_CHAR", index: i++, value: str[i++] });
+      continue;
+    }
+    if (char === "{") {
+      tokens.push({ type: "OPEN", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === "}") {
+      tokens.push({ type: "CLOSE", index: i, value: str[i++] });
+      continue;
+    }
+    if (char === ":") {
+      var name = "";
+      var j = i + 1;
+      while (j < str.length) {
+        var code = str.charCodeAt(j);
+        if (
+          // `0-9`
+          code >= 48 && code <= 57 || // `A-Z`
+          code >= 65 && code <= 90 || // `a-z`
+          code >= 97 && code <= 122 || // `_`
+          code === 95
+        ) {
+          name += str[j++];
+          continue;
+        }
+        break;
+      }
+      if (!name)
+        throw new TypeError("Missing parameter name at ".concat(i));
+      tokens.push({ type: "NAME", index: i, value: name });
+      i = j;
+      continue;
+    }
+    if (char === "(") {
+      var count = 1;
+      var pattern = "";
+      var j = i + 1;
+      if (str[j] === "?") {
+        throw new TypeError('Pattern cannot start with "?" at '.concat(j));
+      }
+      while (j < str.length) {
+        if (str[j] === "\\") {
+          pattern += str[j++] + str[j++];
+          continue;
+        }
+        if (str[j] === ")") {
+          count--;
+          if (count === 0) {
+            j++;
+            break;
+          }
+        } else if (str[j] === "(") {
+          count++;
+          if (str[j + 1] !== "?") {
+            throw new TypeError("Capturing groups are not allowed at ".concat(j));
+          }
+        }
+        pattern += str[j++];
+      }
+      if (count)
+        throw new TypeError("Unbalanced pattern at ".concat(i));
+      if (!pattern)
+        throw new TypeError("Missing pattern at ".concat(i));
+      tokens.push({ type: "PATTERN", index: i, value: pattern });
+      i = j;
+      continue;
+    }
+    tokens.push({ type: "CHAR", index: i, value: str[i++] });
+  }
+  tokens.push({ type: "END", index: i, value: "" });
+  return tokens;
+}
+__name(lexer, "lexer");
+function parse(str, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var tokens = lexer(str);
+  var _a = options.prefixes, prefixes = _a === void 0 ? "./" : _a, _b = options.delimiter, delimiter = _b === void 0 ? "/#?" : _b;
+  var result = [];
+  var key = 0;
+  var i = 0;
+  var path = "";
+  var tryConsume = /* @__PURE__ */ __name(function(type) {
+    if (i < tokens.length && tokens[i].type === type)
+      return tokens[i++].value;
+  }, "tryConsume");
+  var mustConsume = /* @__PURE__ */ __name(function(type) {
+    var value2 = tryConsume(type);
+    if (value2 !== void 0)
+      return value2;
+    var _a2 = tokens[i], nextType = _a2.type, index = _a2.index;
+    throw new TypeError("Unexpected ".concat(nextType, " at ").concat(index, ", expected ").concat(type));
+  }, "mustConsume");
+  var consumeText = /* @__PURE__ */ __name(function() {
+    var result2 = "";
+    var value2;
+    while (value2 = tryConsume("CHAR") || tryConsume("ESCAPED_CHAR")) {
+      result2 += value2;
+    }
+    return result2;
+  }, "consumeText");
+  var isSafe = /* @__PURE__ */ __name(function(value2) {
+    for (var _i = 0, delimiter_1 = delimiter; _i < delimiter_1.length; _i++) {
+      var char2 = delimiter_1[_i];
+      if (value2.indexOf(char2) > -1)
+        return true;
+    }
+    return false;
+  }, "isSafe");
+  var safePattern = /* @__PURE__ */ __name(function(prefix2) {
+    var prev = result[result.length - 1];
+    var prevText = prefix2 || (prev && typeof prev === "string" ? prev : "");
+    if (prev && !prevText) {
+      throw new TypeError('Must have text between two parameters, missing text after "'.concat(prev.name, '"'));
+    }
+    if (!prevText || isSafe(prevText))
+      return "[^".concat(escapeString(delimiter), "]+?");
+    return "(?:(?!".concat(escapeString(prevText), ")[^").concat(escapeString(delimiter), "])+?");
+  }, "safePattern");
+  while (i < tokens.length) {
+    var char = tryConsume("CHAR");
+    var name = tryConsume("NAME");
+    var pattern = tryConsume("PATTERN");
+    if (name || pattern) {
+      var prefix = char || "";
+      if (prefixes.indexOf(prefix) === -1) {
+        path += prefix;
+        prefix = "";
+      }
+      if (path) {
+        result.push(path);
+        path = "";
+      }
+      result.push({
+        name: name || key++,
+        prefix,
+        suffix: "",
+        pattern: pattern || safePattern(prefix),
+        modifier: tryConsume("MODIFIER") || ""
+      });
+      continue;
+    }
+    var value = char || tryConsume("ESCAPED_CHAR");
+    if (value) {
+      path += value;
+      continue;
+    }
+    if (path) {
+      result.push(path);
+      path = "";
+    }
+    var open = tryConsume("OPEN");
+    if (open) {
+      var prefix = consumeText();
+      var name_1 = tryConsume("NAME") || "";
+      var pattern_1 = tryConsume("PATTERN") || "";
+      var suffix = consumeText();
+      mustConsume("CLOSE");
+      result.push({
+        name: name_1 || (pattern_1 ? key++ : ""),
+        pattern: name_1 && !pattern_1 ? safePattern(prefix) : pattern_1,
+        prefix,
+        suffix,
+        modifier: tryConsume("MODIFIER") || ""
+      });
+      continue;
+    }
+    mustConsume("END");
+  }
+  return result;
+}
+__name(parse, "parse");
+function match(str, options) {
+  var keys = [];
+  var re = pathToRegexp(str, keys, options);
+  return regexpToFunction(re, keys, options);
+}
+__name(match, "match");
+function regexpToFunction(re, keys, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _a = options.decode, decode = _a === void 0 ? function(x) {
+    return x;
+  } : _a;
+  return function(pathname) {
+    var m = re.exec(pathname);
+    if (!m)
+      return false;
+    var path = m[0], index = m.index;
+    var params = /* @__PURE__ */ Object.create(null);
+    var _loop_1 = /* @__PURE__ */ __name(function(i2) {
+      if (m[i2] === void 0)
+        return "continue";
+      var key = keys[i2 - 1];
+      if (key.modifier === "*" || key.modifier === "+") {
+        params[key.name] = m[i2].split(key.prefix + key.suffix).map(function(value) {
+          return decode(value, key);
+        });
+      } else {
+        params[key.name] = decode(m[i2], key);
+      }
+    }, "_loop_1");
+    for (var i = 1; i < m.length; i++) {
+      _loop_1(i);
+    }
+    return { path, index, params };
+  };
+}
+__name(regexpToFunction, "regexpToFunction");
+function escapeString(str) {
+  return str.replace(/([.+*?=^!:${}()[\]|/\\])/g, "\\$1");
+}
+__name(escapeString, "escapeString");
+function flags(options) {
+  return options && options.sensitive ? "" : "i";
+}
+__name(flags, "flags");
+function regexpToRegexp(path, keys) {
+  if (!keys)
+    return path;
+  var groupsRegex = /\((?:\?<(.*?)>)?(?!\?)/g;
+  var index = 0;
+  var execResult = groupsRegex.exec(path.source);
+  while (execResult) {
+    keys.push({
+      // Use parenthesized substring match if available, index otherwise
+      name: execResult[1] || index++,
+      prefix: "",
+      suffix: "",
+      modifier: "",
+      pattern: ""
+    });
+    execResult = groupsRegex.exec(path.source);
+  }
+  return path;
+}
+__name(regexpToRegexp, "regexpToRegexp");
+function arrayToRegexp(paths, keys, options) {
+  var parts = paths.map(function(path) {
+    return pathToRegexp(path, keys, options).source;
+  });
+  return new RegExp("(?:".concat(parts.join("|"), ")"), flags(options));
+}
+__name(arrayToRegexp, "arrayToRegexp");
+function stringToRegexp(path, keys, options) {
+  return tokensToRegexp(parse(path, options), keys, options);
+}
+__name(stringToRegexp, "stringToRegexp");
+function tokensToRegexp(tokens, keys, options) {
+  if (options === void 0) {
+    options = {};
+  }
+  var _a = options.strict, strict = _a === void 0 ? false : _a, _b = options.start, start = _b === void 0 ? true : _b, _c = options.end, end = _c === void 0 ? true : _c, _d = options.encode, encode = _d === void 0 ? function(x) {
+    return x;
+  } : _d, _e = options.delimiter, delimiter = _e === void 0 ? "/#?" : _e, _f = options.endsWith, endsWith = _f === void 0 ? "" : _f;
+  var endsWithRe = "[".concat(escapeString(endsWith), "]|$");
+  var delimiterRe = "[".concat(escapeString(delimiter), "]");
+  var route = start ? "^" : "";
+  for (var _i = 0, tokens_1 = tokens; _i < tokens_1.length; _i++) {
+    var token = tokens_1[_i];
+    if (typeof token === "string") {
+      route += escapeString(encode(token));
+    } else {
+      var prefix = escapeString(encode(token.prefix));
+      var suffix = escapeString(encode(token.suffix));
+      if (token.pattern) {
+        if (keys)
+          keys.push(token);
+        if (prefix || suffix) {
+          if (token.modifier === "+" || token.modifier === "*") {
+            var mod = token.modifier === "*" ? "?" : "";
+            route += "(?:".concat(prefix, "((?:").concat(token.pattern, ")(?:").concat(suffix).concat(prefix, "(?:").concat(token.pattern, "))*)").concat(suffix, ")").concat(mod);
+          } else {
+            route += "(?:".concat(prefix, "(").concat(token.pattern, ")").concat(suffix, ")").concat(token.modifier);
+          }
+        } else {
+          if (token.modifier === "+" || token.modifier === "*") {
+            throw new TypeError('Can not repeat "'.concat(token.name, '" without a prefix and suffix'));
+          }
+          route += "(".concat(token.pattern, ")").concat(token.modifier);
+        }
+      } else {
+        route += "(?:".concat(prefix).concat(suffix, ")").concat(token.modifier);
+      }
+    }
+  }
+  if (end) {
+    if (!strict)
+      route += "".concat(delimiterRe, "?");
+    route += !options.endsWith ? "$" : "(?=".concat(endsWithRe, ")");
+  } else {
+    var endToken = tokens[tokens.length - 1];
+    var isEndDelimited = typeof endToken === "string" ? delimiterRe.indexOf(endToken[endToken.length - 1]) > -1 : endToken === void 0;
+    if (!strict) {
+      route += "(?:".concat(delimiterRe, "(?=").concat(endsWithRe, "))?");
+    }
+    if (!isEndDelimited) {
+      route += "(?=".concat(delimiterRe, "|").concat(endsWithRe, ")");
+    }
+  }
+  return new RegExp(route, flags(options));
+}
+__name(tokensToRegexp, "tokensToRegexp");
+function pathToRegexp(path, keys, options) {
+  if (path instanceof RegExp)
+    return regexpToRegexp(path, keys);
+  if (Array.isArray(path))
+    return arrayToRegexp(path, keys, options);
+  return stringToRegexp(path, keys, options);
+}
+__name(pathToRegexp, "pathToRegexp");
+
+// ../node_modules/wrangler/templates/pages-template-worker.ts
+var escapeRegex = /[.+?^${}()|[\]\\]/g;
+function* executeRequest(request) {
+  const requestPath = new URL(request.url).pathname;
+  for (const route of [...routes].reverse()) {
+    if (route.method && route.method !== request.method) {
+      continue;
+    }
+    const routeMatcher = match(route.routePath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const mountMatcher = match(route.mountPath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const matchResult = routeMatcher(requestPath);
+    const mountMatchResult = mountMatcher(requestPath);
+    if (matchResult && mountMatchResult) {
+      for (const handler of route.middlewares.flat()) {
+        yield {
+          handler,
+          params: matchResult.params,
+          path: mountMatchResult.path
+        };
+      }
+    }
+  }
+  for (const route of routes) {
+    if (route.method && route.method !== request.method) {
+      continue;
+    }
+    const routeMatcher = match(route.routePath.replace(escapeRegex, "\\$&"), {
+      end: true
+    });
+    const mountMatcher = match(route.mountPath.replace(escapeRegex, "\\$&"), {
+      end: false
+    });
+    const matchResult = routeMatcher(requestPath);
+    const mountMatchResult = mountMatcher(requestPath);
+    if (matchResult && mountMatchResult && route.modules.length) {
+      for (const handler of route.modules.flat()) {
+        yield {
+          handler,
+          params: matchResult.params,
+          path: matchResult.path
+        };
+      }
+      break;
+    }
+  }
+}
+__name(executeRequest, "executeRequest");
+var pages_template_worker_default = {
+  async fetch(originalRequest, env, workerContext) {
+    let request = originalRequest;
+    const handlerIterator = executeRequest(request);
+    let data = {};
+    let isFailOpen = false;
+    const next = /* @__PURE__ */ __name(async (input, init) => {
+      if (input !== void 0) {
+        let url = input;
+        if (typeof input === "string") {
+          url = new URL(input, request.url).toString();
+        }
+        request = new Request(url, init);
+      }
+      const result = handlerIterator.next();
+      if (result.done === false) {
+        const { handler, params, path } = result.value;
+        const context = {
+          request: new Request(request.clone()),
+          functionPath: path,
+          next,
+          params,
+          get data() {
+            return data;
+          },
+          set data(value) {
+            if (typeof value !== "object" || value === null) {
+              throw new Error("context.data must be an object");
+            }
+            data = value;
+          },
+          env,
+          waitUntil: workerContext.waitUntil.bind(workerContext),
+          passThroughOnException: /* @__PURE__ */ __name(() => {
+            isFailOpen = true;
+          }, "passThroughOnException")
+        };
+        const response = await handler(context);
+        if (!(response instanceof Response)) {
+          throw new Error("Your Pages function should return a Response");
+        }
+        return cloneResponse(response);
+      } else if ("ASSETS") {
+        const response = await env["ASSETS"].fetch(request);
+        return cloneResponse(response);
+      } else {
+        const response = await fetch(request);
+        return cloneResponse(response);
+      }
+    }, "next");
+    try {
+      return await next();
+    } catch (error) {
+      if (isFailOpen) {
+        const response = await env["ASSETS"].fetch(request);
+        return cloneResponse(response);
+      }
+      throw error;
+    }
+  }
+};
+var cloneResponse = /* @__PURE__ */ __name((response) => (
+  // https://fetch.spec.whatwg.org/#null-body-status
+  new Response(
+    [101, 204, 205, 304].includes(response.status) ? null : response.body,
+    response
+  )
+), "cloneResponse");
+export {
+  pages_template_worker_default as default
+};
+
+------formdata-undici-066233613273--
